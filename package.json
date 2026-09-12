@@ -1,0 +1,10 @@
+{
+  "name": "miami-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MIAMI 멀티플레이 위치 중계 서버",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}

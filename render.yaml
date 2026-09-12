@@ -1,0 +1,18 @@
+# Render 블루프린트
+# ---------------------------------------------------------------------
+# 이 파일이 저장소 '맨 위'에 server.js, package.json 과 나란히 있다고 가정합니다.
+# (RENDER.md 가 안내하는 방식) Render 대시보드에서
+#   New → Blueprint → 이 저장소 선택
+# 하면 아래 설정이 자동으로 들어갑니다.
+services:
+  - type: web
+    name: miami-relay
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: ALLOWED_ORIGINS
+        # 배포한 게임 주소. 여러 개면 쉼표로 구분하고, 끝에 / 를 붙이지 마세요.
+        value: https://sexmoneymuder2.netlify.app
