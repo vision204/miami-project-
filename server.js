@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'pvp-3';
+const BUILD = 'look-1';
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
@@ -118,6 +118,7 @@ wss.on('connection', (ws, req) => {
     /* 0:x 1:y 2:z 3:yaw 4:차량탑승 5:색 6:속도
        7:flags(1앉기 2공중 4조준 8발사 16사망 32무적) 8:무기 9:체력 */
     s: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100],
+    look: null,                   // 캐릭터 외형 (팔레트 번호 배열)
     seen: Date.now(),
     count: 0, window: Date.now(),
   };
@@ -128,7 +129,10 @@ wss.on('connection', (ws, req) => {
      (예전에는 이걸 별도 connection 핸들러 + setTimeout 으로 했는데,
       두 명이 동시에 들어오면 join 이 중복으로 갔다) */
   for (const p of room.values())
-    if (p.id !== peer.id) send(ws, { t: 'join', id: p.id, name: p.name });
+    if (p.id !== peer.id){
+      send(ws, { t: 'join', id: p.id, name: p.name });
+      if (p.look) send(ws, { t: 'look', id: p.id, v: p.look });
+    }
   broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
 
   ws.on('message', (buf) => {
@@ -165,6 +169,10 @@ wss.on('connection', (ws, req) => {
       const target = room.get(num(m.id, 0, 1e9) | 0);
       if (target && target.id !== peer.id)
         send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 15) | 0 });
+    } else if (m.t === 'look' && Array.isArray(m.v)){
+      /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
+      peer.look = m.v.slice(0, 8).map(x => num(x, 0, 255) | 0);
+      broadcast(room, { t: 'look', id: peer.id, v: peer.look }, peer.id);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
       broadcast(room, { t: 'dead', id: peer.id, by: num(m.by, 0, 1e9) | 0 }, null);
