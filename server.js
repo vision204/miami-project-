@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'look-1';
+const BUILD = 'homes-spawn-2';
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
@@ -122,9 +122,10 @@ wss.on('connection', (ws, req) => {
     seen: Date.now(),
     count: 0, window: Date.now(),
   };
+  const leader=[...room.values()][0];peer.ready=false;peer.waiting=!!leader&&!leader.ready;
   room.set(peer.id, peer);
 
-  send(ws, { t: 'welcome', id: peer.id, room: roomId, hz: LIMITS.TICK_HZ });
+  send(ws, { t: 'welcome', id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
   /* 새로 들어온 사람에게 기존 인원의 이름을 먼저 알려준다.
      (예전에는 이걸 별도 connection 핸들러 + setTimeout 으로 했는데,
       두 명이 동시에 들어오면 join 이 중복으로 갔다) */
@@ -159,6 +160,8 @@ wss.on('connection', (ws, req) => {
         num(m.s[8], 0, 15) | 0,       // 무기
         num(m.s[9], 0, 100) | 0,      // 체력
       ];
+      if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
+      if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
     } else if (m.t === 'name'){
       peer.name = sanitizeName(m.name);
       broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
@@ -167,7 +170,7 @@ wss.on('connection', (ws, req) => {
          실제로 피가 깎일지는 맞은 쪽이 정한다 (부활 직후 무적이면 무시).
          서버는 판정하지 않는다 — 물리·시야가 전부 브라우저에 있기 때문이다. */
       const target = room.get(num(m.id, 0, 1e9) | 0);
-      if (target && target.id !== peer.id)
+      if (target && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
         send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 15) | 0 });
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
@@ -184,6 +187,7 @@ wss.on('connection', (ws, req) => {
   const drop = () => {
     if (!room.has(peer.id)) return;
     room.delete(peer.id);
+    for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:"spawn",spawn:{random:true}});break;}
     broadcast(room, { t: 'bye', id: peer.id });
     if (!room.size) rooms.delete(roomId);
   };
@@ -218,7 +222,7 @@ setInterval(() => {
       if (me.ws.readyState !== 1) continue;
       const others = [];
       for (const o of all){
-        if (o.id === me.id) continue;
+        if (o.id === me.id || !o.ready) continue;
         others.push([o.id, ...o.s.map(v => Math.round(v * 100) / 100)]);
       }
       me.ws.send(JSON.stringify({ t: 'snap', a: others }));
