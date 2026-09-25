@@ -1,7 +1,7 @@
 /* =====================================================================
    MIAMI 멀티플레이 중계 서버
    ---------------------------------------------------------------------
-   하는 일은 하나다 : 같은 방에 있는 사람들의 위치를 서로에게 전달한다.
+   같은 방의 위치·전투 이벤트를 중계하고 10초 수명의 채팅을 처리한다.
    물리·충돌·전투는 각자 브라우저에서 돌고, 서버는 판정하지 않는다.
 
    왜 이렇게 만들었나
@@ -17,17 +17,18 @@
    ===================================================================== */
 import http from 'http';
 import { WebSocketServer } from 'ws';
+import { RoomChat } from './chat.js';
 
 const PORT = process.env.PORT || 8080;
 
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'homes-spawn-2';
+const BUILD = 'ephemeral-chat-1';
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
-   예: https://sexmoneymuder2.netlify.app,http://localhost:8765 */
+   예: https://smm2online.com,https://www.smm2online.com,http://localhost:8765 */
 const ALLOWED = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
@@ -45,6 +46,8 @@ const LIMITS = {
    상태
    --------------------------------------------------------------------- */
 const rooms = new Map();   // roomId -> Map(id -> peer)
+const chat = new RoomChat((roomId, message) => { const room=rooms.get(roomId); if(room)broadcast(room,message); });
+setInterval(() => chat.tick(), 50).unref();
 let nextId = 1;
 
 const roomOf = (id) => {
@@ -74,7 +77,7 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, pvp: true,
+      build: BUILD, pvp: true, chat: true,
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
       total: [...rooms.values()].reduce((a, r) => a + r.size, 0),
       uptimeSec: Math.round(process.uptime()),
@@ -126,6 +129,7 @@ wss.on('connection', (ws, req) => {
   room.set(peer.id, peer);
 
   send(ws, { t: 'welcome', id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
+  send(ws, {t:'chat_state', messages:chat.snapshot(roomId), serverNow:Date.now()});
   /* 새로 들어온 사람에게 기존 인원의 이름을 먼저 알려준다.
      (예전에는 이걸 별도 connection 핸들러 + setTimeout 으로 했는데,
       두 명이 동시에 들어오면 join 이 중복으로 갔다) */
@@ -154,14 +158,18 @@ wss.on('connection', (ws, req) => {
         num(m.s[2], -20000, 20000),   // z
         num(m.s[3], -7, 7),           // yaw
         m.s[4] ? 1 : 0,               // 차량 탑승 여부
-        num(m.s[5], 0, 63) | 0,       // 차량 모델
+        num(m.s[5], 0, 65535) | 0,    // vehicle catalog index; 65535 = unknown
         num(m.s[6], 0, 200),          // 속도 (애니메이션용)
         num(m.s[7], 0, 255) | 0,      // 상태 플래그
         num(m.s[8], 0, 15) | 0,       // 무기
         num(m.s[9], 0, 100) | 0,      // 체력
+        num(m.s[10], -1.6, 1.6),     // optional aircraft pitch; old clients default to 0
+        num(m.s[11], -1.6, 1.6),     // optional aircraft roll
       ];
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
+    } else if (m.t === 'chat'){
+      chat.receive(peer, m.text, message => send(ws,message));
     } else if (m.t === 'name'){
       peer.name = sanitizeName(m.name);
       broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
@@ -189,7 +197,7 @@ wss.on('connection', (ws, req) => {
     room.delete(peer.id);
     for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:"spawn",spawn:{random:true}});break;}
     broadcast(room, { t: 'bye', id: peer.id });
-    if (!room.size) rooms.delete(roomId);
+    if (!room.size) { rooms.delete(roomId); chat.drop(roomId); }
   };
   ws.on('close', drop);
   ws.on('error', drop);
@@ -213,7 +221,7 @@ setInterval(() => {
     for (const p of [...room.values()]){
       if (now - p.seen > LIMITS.IDLE_MS){ p.ws.close(1000, 'idle'); room.delete(p.id); }
     }
-    if (!room.size){ rooms.delete(roomId); continue; }
+    if (!room.size){ rooms.delete(roomId); chat.drop(roomId); continue; }
     if (room.size < 2) continue;
 
     /* 각자에게 '나를 뺀' 목록을 보낸다 */
