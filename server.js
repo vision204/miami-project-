@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'friends-1';
+const BUILD = 'war-1';           // 2026-09-27 : military launch / impact visual relay
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
@@ -94,7 +94,7 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, pvp: true, chat: true, friends: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, war: true, pvp: true, chat: true, friends: true, rank: true, nearM: LIMITS.NEAR_M,
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
       total: [...rooms.values()].reduce((a, r) => a + r.size, 0),
       uptimeSec: Math.round(process.uptime()),
@@ -179,13 +179,33 @@ wss.on('connection', (ws, req) => {
         num(m.s[5], 0, 65535) | 0,    // vehicle catalog index; 65535 = unknown
         num(m.s[6], 0, 200),          // 속도 (애니메이션용)
         num(m.s[7], 0, 255) | 0,      // 상태 플래그
-        num(m.s[8], 0, 15) | 0,       // 무기
+        num(m.s[8], 0, 63) | 0,       // 무기 (0~63 — 총 26정, tools/arsenal.js)
         num(m.s[9], 0, 100) | 0,      // 체력
         num(m.s[10], -1.6, 1.6),     // optional aircraft pitch; old clients default to 0
         num(m.s[11], -1.6, 1.6),     // optional aircraft roll
       ];
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
+    } else if (m.t === 'warfx'){
+      // Cosmetic events only: retain existing hit validation, never apply damage here.
+      const vec = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+      if (!peer.ready || (peer.s[7] & (16|128)) || !vec(m.o) || typeof m.id !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(m.id)) return;
+      if (Math.hypot(m.o[0]-peer.s[0],m.o[1]-peer.s[1],m.o[2]-peer.s[2])>6000) return;
+      if (now-(peer.fxWindow||0)>1000){peer.fxWindow=now;peer.fxCount=0;}
+      if ((peer.fxCount=(peer.fxCount||0)+1)>12) return;
+      if(m.phase==='pose'){
+        if(!Array.isArray(m.pose)||m.pose.length!==5||!m.pose.every(Number.isFinite)||!peer.s[4])return;
+        const pose=[num(m.pose[0],-7,7),num(m.pose[1],-.2,1.1),num(m.pose[2],0,1),num(m.pose[3],0,1),num(m.pose[4],0,1)];
+        broadcast(room,{t:'warfx',from:peer.id,phase:'pose',id:'pose',o:m.o,pose},peer.id);
+      } else if(m.phase==='drone'){
+        if(!vec(m.d)||Math.hypot(m.o[0]-peer.s[0],m.o[1]-peer.s[1],m.o[2]-peer.s[2])>2300)return;
+        broadcast(room,{t:'warfx',from:peer.id,phase:'drone',id:'drone',o:m.o,d:m.d},peer.id);
+      } else if (m.phase==='launch'){
+        if (!vec(m.d) || !['missile','shell'].includes(m.kind)) return;
+        const len=Math.hypot(...m.d);if(len<.5||len>1.5)return;
+        const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<22000)?m.target:null;
+        broadcast(room,{t:'warfx',from:peer.id,phase:'launch',id:m.id,kind:m.kind,o:m.o,d:m.d.map(v=>v/len),target},peer.id);
+      } else if(m.phase==='impact') broadcast(room,{t:'warfx',from:peer.id,phase:'impact',id:m.id,o:m.o},peer.id);
     } else if (m.t === 'chat'){
       chat.receive(peer, m.text, message => send(ws,message));
     } else if (m.t === 'name'){
@@ -197,7 +217,7 @@ wss.on('connection', (ws, req) => {
          서버는 판정하지 않는다 — 물리·시야가 전부 브라우저에 있기 때문이다. */
       const target = room.get(num(m.id, 0, 1e9) | 0);
       if (target && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
-        send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 15) | 0 });
+        send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 63) | 0 });
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
       peer.look = m.v.slice(0, 8).map(x => num(x, 0, 255) | 0);
@@ -231,6 +251,17 @@ wss.on('connection', (ws, req) => {
       const uid = String(m.uid || '');
       const r = friends.remove(peer, uid);
       for (const p of r.notify || []) send(p.ws, { t: 'fdel', uid: peer.uid });
+    } else if (m.t === 'cash'){
+      /* 서버 순위표 : 각자 자기 돈을 알린다 (조작은 막을 수 없다 — 표시용) */
+      peer.cash = Math.floor(num(m.v, 0, 1e12));
+    } else if (m.t === 'rank'){
+      /* 지금 이 서버에 접속한 모든 사람(모든 방) — 돈 많은 순 */
+      const all = [];
+      for (const r of rooms.values()) for (const p of r.values())
+        if (Number.isFinite(p.cash)) all.push({ id: p.id, name: p.name, cash: p.cash });
+      all.sort((a, b) => b.cash - a.cash || a.id - b.id);
+      const mine = all.findIndex(r => r.id === peer.id);
+      send(ws, { t: 'rank', rows: all.slice(0, 20), me: peer.id, myRank: mine >= 0 ? mine + 1 : 0, total: all.length });
     } else if (m.t === 'ping'){
       send(ws, { t: 'pong', c: m.c });
     }
