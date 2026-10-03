@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'war-1';           // 2026-09-27 : military launch / impact visual relay
+const BUILD = 'bin-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
@@ -94,7 +94,9 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, war: true, pvp: true, chat: true, friends: true, rank: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, nearM: LIMITS.NEAR_M,
+      /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
+      snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
       total: [...rooms.values()].reduce((a, r) => a + r.size, 0),
       uptimeSec: Math.round(process.uptime()),
@@ -135,6 +137,8 @@ wss.on('connection', (ws, req) => {
     id: nextId++,
     ws, roomId,
     name: sanitizeName(url.searchParams.get('name')),
+    bin: url.searchParams.get('bin') === '1',   // 새 화면만 압축 스냅샷을 받는다 (옛 화면은 예전 JSON 그대로)
+    known: new Map(),
     /* 0:x 1:y 2:z 3:yaw 4:차량탑승 5:색 6:속도
        7:flags(1앉기 2공중 4조준 8발사 16사망 32무적) 8:무기 9:체력 */
     s: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100],
@@ -196,7 +200,7 @@ wss.on('connection', (ws, req) => {
       if(m.phase==='pose'){
         if(!Array.isArray(m.pose)||m.pose.length!==5||!m.pose.every(Number.isFinite)||!peer.s[4])return;
         const pose=[num(m.pose[0],-7,7),num(m.pose[1],-.2,1.1),num(m.pose[2],0,1),num(m.pose[3],0,1),num(m.pose[4],0,1)];
-        broadcast(room,{t:'warfx',from:peer.id,phase:'pose',id:'pose',o:m.o,pose},peer.id);
+        broadcastNear(room,peer,{t:'warfx',from:peer.id,phase:'pose',id:'pose',o:m.o,pose});   // 포탑 자세는 보이는 거리의 사람에게만
       } else if(m.phase==='drone'){
         if(!vec(m.d)||Math.hypot(m.o[0]-peer.s[0],m.o[1]-peer.s[1],m.o[2]-peer.s[2])>2300)return;
         broadcast(room,{t:'warfx',from:peer.id,phase:'drone',id:'drone',o:m.o,d:m.d},peer.id);
@@ -220,7 +224,7 @@ wss.on('connection', (ws, req) => {
         send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 63) | 0 });
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
-      peer.look = m.v.slice(0, 8).map(x => num(x, 0, 255) | 0);
+      peer.look = m.v.slice(0, 12).map(x => num(x, 0, 255) | 0);
       broadcast(room, { t: 'look', id: peer.id, v: peer.look }, peer.id);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
@@ -287,6 +291,50 @@ function broadcast(room, obj, exceptId){
     if (p.id !== exceptId && p.ws.readyState === 1) p.ws.send(msg);
 }
 
+/** 가까운 사람(스냅샷과 같은 범위)에게만 보낸다 */
+function broadcastNear(room, from, obj){
+  const msg = JSON.stringify(obj);
+  for (const p of room.values()){
+    if (p.id === from.id || p.ws.readyState !== 1) continue;
+    const dx = p.s[0] - from.s[0], dz = p.s[2] - from.s[2];
+    if (p.ready && dx*dx + dz*dz > NEAR2) continue;
+    p.ws.send(msg);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   압축 스냅샷 (2026-10-03)
+   ---------------------------------------------------------------------
+   전송량이 곧 Render 요금이라, 같은 내용을 JSON 글자 대신 바이트로 보낸다.
+   화면에 보이는 값은 예전과 같거나 더 정밀하다 (위치 1cm, 방향 0.00025rad).
+
+   프레임 : [1] 뒤에 사람마다
+     u32  id*2 + full      full=0 이면 '지난 틱과 똑같다' — 뒤에 아무것도 없다 (4바이트)
+     i24×3 x,y,z (cm) · i16 yaw×4000 · u8 flags · u8 무기 · u8 체력 · u16 속도×10 · u8 mode
+     mode&1 = 차량(긴 형식) : u16 차종 · i16 pitch×10000 · i16 roll×10000
+     아니면 (걷는 사람)      : i16 자세×10000
+   받는 사람마다 '지난 틱에 무엇을 보냈는지' 기억한다. 지난 틱에 안 보낸 사람,
+   값이 바뀐 사람, 2초가 지난 사람은 전체를 다시 보낸다. */
+const OUT = { bin: 0, json: 0 };
+const q = (v, k, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v * k)));
+function packPeer(o){
+  const s = o.s, long = !!s[4] || !!s[11], b = Buffer.allocUnsafe(long ? 23 : 19);
+  b.writeIntLE(q(s[0], 100, -8388607, 8388607), 0, 3);
+  b.writeIntLE(q(s[1], 100, -8388607, 8388607), 3, 3);
+  b.writeIntLE(q(s[2], 100, -8388607, 8388607), 6, 3);
+  b.writeInt16LE(q(s[3], 4000, -32767, 32767), 9);
+  b.writeUInt8(s[7] & 255, 11); b.writeUInt8(s[8] & 255, 12); b.writeUInt8(s[9] & 255, 13);
+  b.writeUInt16LE(q(s[6], 10, 0, 65535), 14);
+  b.writeUInt8((s[4] ? 1 : 0) | (long ? 2 : 0), 16);
+  if (long){
+    b.writeUInt16LE(s[5] & 65535, 17);
+    b.writeInt16LE(q(s[10] || 0, 10000, -32767, 32767), 19);
+    b.writeInt16LE(q(s[11] || 0, 10000, -32767, 32767), 21);
+  } else b.writeInt16LE(q(s[10] || 0, 10000, -32767, 32767), 17);
+  if (!o.pack || !o.pack.equals(b)){ o.pack = b; o.ver = (o.ver || 0) + 1; }
+}
+const SNAP_HEAD = Buffer.from([1]), REFRESH_TICKS = 30;
+
 /* ---------------------------------------------------------------------
    스냅샷 전송 — 가까운 사람만 (관심 범위)
    ---------------------------------------------------------------------
@@ -306,8 +354,24 @@ setInterval(() => {
 
     /* 각자에게 '나를 뺀, 가까운 사람' 목록을 보낸다 */
     const all = [...room.values()];
+    if (all.some(p => p.bin)) for (const o of all) if (o.ready) packPeer(o);
     for (const me of all){
       if (me.ws.readyState !== 1) continue;
+      if (me.bin){
+        const parts = [SNAP_HEAD], known = new Map();
+        for (const o of all){
+          if (o.id === me.id || !o.ready) continue;
+          const dx = o.s[0] - me.s[0], dz = o.s[2] - me.s[2];
+          if (me.ready && dx*dx + dz*dz > NEAR2) continue;
+          const k = me.known.get(o.id), full = !k || k.ver !== o.ver || tickNo - k.at >= REFRESH_TICKS;
+          const head = Buffer.allocUnsafe(4); head.writeUInt32LE(o.id * 2 + (full ? 1 : 0), 0);
+          parts.push(head); if (full) parts.push(o.pack);
+          known.set(o.id, full ? { ver: o.ver, at: tickNo } : k);
+        }
+        me.known = known;
+        if (parts.length > 1){ const buf = Buffer.concat(parts); OUT.bin += buf.length; me.ws.send(buf); }
+        continue;
+      }
       const others = [];
       for (const o of all){
         if (o.id === me.id || !o.ready) continue;
@@ -315,7 +379,7 @@ setInterval(() => {
         if (me.ready && dx*dx + dz*dz > NEAR2) continue;
         others.push([o.id, ...o.s.map(v => Math.round(v * 100) / 100)]);
       }
-      if (others.length) me.ws.send(JSON.stringify({ t: 'snap', a: others }));
+      if (others.length){ const msg = JSON.stringify({ t: 'snap', a: others }); OUT.json += msg.length; me.ws.send(msg); }
     }
   }
   /* 친구 위치 (1초에 한 번) : 서로 친구인 접속 중인 사람의 x·z. 방이 달라도 보낸다. */
