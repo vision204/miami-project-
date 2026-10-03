@@ -181,12 +181,12 @@ wss.on('connection', (ws, req) => {
         num(m.s[3], -7, 7),           // yaw
         m.s[4] ? 1 : 0,               // 차량 탑승 여부
         num(m.s[5], 0, 65535) | 0,    // vehicle catalog index; 65535 = unknown
-        num(m.s[6], 0, 200),          // 속도 (애니메이션용)
+        num(m.s[6], 0, 600),          // 속도 (애니메이션용 · 전투기 시속 2000km = 556 m/s)
         num(m.s[7], 0, 255) | 0,      // 상태 플래그
         num(m.s[8], 0, 63) | 0,       // 무기 (0~63 — 총 26정, tools/arsenal.js)
         num(m.s[9], 0, 100) | 0,      // 체력
         num(m.s[10], -1.6, 1.6),     // optional aircraft pitch; old clients default to 0
-        num(m.s[11], -1.6, 1.6),     // optional aircraft roll
+        num(m.s[11], -3.2, 3.2),     // optional aircraft roll (a full barrel roll: ±π)
       ];
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
