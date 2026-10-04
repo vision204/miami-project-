@@ -210,6 +210,23 @@ wss.on('connection', (ws, req) => {
         const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<22000)?m.target:null;
         broadcast(room,{t:'warfx',from:peer.id,phase:'launch',id:m.id,kind:m.kind,o:m.o,d:m.d.map(v=>v/len),target},peer.id);
       } else if(m.phase==='impact') broadcast(room,{t:'warfx',from:peer.id,phase:'impact',id:m.id,o:m.o},peer.id);
+    } else if (m.t === 'pp'){
+      /* 학교 탁구 (pp-1) : 경기 신호를 가까운 사람에게 전달만 한다. 판정은 브라우저가 한다(받는 쪽이 맞혔는지 스스로 정한다).
+         값은 여기서 다시 만들어 보낸다 — 보낸 사람 번호(id)는 서버가 붙인다. */
+      if (!peer.ready || (peer.s[7] & 128)) return;
+      if (now-(peer.ppWindow||0)>1000){peer.ppWindow=now;peer.ppCount=0;}
+      if ((peer.ppCount=(peer.ppCount||0)+1)>40) return;
+      const k = m.k; if (!['sit','stand','pad','shot','point','end'].includes(k)) return;
+      const out = { t:'pp', id:peer.id, k, tb: num(m.tb,0,1)|0, side: m.side ? 1 : 0 };
+      const v3 = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite) ? v.map(x => num(x,-25,25)) : null;
+      if (k === 'sit') out.busy = m.busy ? 1 : 0;
+      else if (k === 'pad') out.c = num(m.c,-1.2,1.2);
+      else if (k === 'shot'){ out.p = v3(m.p); out.v = v3(m.v); if (!out.p || !out.v) return; out.n = num(m.n,0,500)|0; }
+      if (k === 'shot' || k === 'point' || k === 'end'){
+        if (Array.isArray(m.sc) && m.sc.length === 2 && m.sc.every(Number.isFinite)) out.sc = [num(m.sc[0],0,9)|0, num(m.sc[1],0,9)|0];
+        else if (k === 'point') return;
+      }
+      broadcastNear(room, peer, out);
     } else if (m.t === 'chat'){
       chat.receive(peer, m.text, message => send(ws,message));
     } else if (m.t === 'name'){
