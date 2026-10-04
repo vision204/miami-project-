@@ -1,4 +1,4 @@
-import {COURTS,slots,world,startRound,action,tickRound,jumpHeight} from '../assets/sports/basketball-rules.js';
+import {COURTS,slots,world,startRound,action,tickRound,jumpHeight} from './sports-shared/basketball-rules.js';
 export class Basketball {
  constructor(sports){this.sports=sports;this.states=new Map();}
  state(room){if(!this.states.has(room))this.states.set(room,COURTS.map(c=>({id:c.id,seats:[null,null,null],phase:'wait',startAt:0,round:null})));return this.states.get(room);}

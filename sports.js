@@ -1,7 +1,7 @@
-import { PADS } from '../assets/sports/golf-course.js';
+import { PADS } from './sports-shared/golf-course.js';
 import { Basketball } from './basketball.js';
-import { PP_PADS } from '../assets/sports/pingpong-pads.js';
-import { newRound, currentPlayer, playShot, advanceRound } from '../assets/sports/golf-rules.js';
+import { PP_PADS } from './sports-shared/pingpong-pads.js';
+import { newRound, currentPlayer, playShot, advanceRound } from './sports-shared/golf-rules.js';
 export class Sports {
  constructor(rooms,send,broadcast){this.rooms=rooms;this.send=send;this.broadcast=broadcast;this.states=new Map();this.basket=new Basketball(this);}
  state(room){if(!this.states.has(room))this.states.set(room,{pads:PADS.map(p=>({id:p.id,seats:p.slots.map(()=>null),phase:'wait',startAt:0,round:null})),pp:PP_PADS.map(()=>({seats:[null,null],busy:false}))});return this.states.get(room);}
