@@ -2,7 +2,7 @@
    MIAMI 멀티플레이 중계 서버
    ---------------------------------------------------------------------
    같은 방의 위치·전투 이벤트를 중계하고 10초 수명의 채팅을 처리한다.
-   물리·충돌·전투는 각자 브라우저에서 돌고, 서버는 판정하지 않는다.
+   도시 물리·충돌·전투는 브라우저에서 돈다. 골프의 발판·차례·공·타수는 서버가 판정한다.
 
    왜 이렇게 만들었나
    - 도시 생성이 완전히 결정론적이라(같은 시드 = 같은 도시) 맵을 보낼 필요가 없다.
@@ -18,6 +18,7 @@
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { RoomChat } from './chat.js';
+import { Sports } from './sports.js';
 import { Friends, validUid } from './friends.js';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
@@ -26,7 +27,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'bin-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
+const BUILD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
@@ -65,6 +66,8 @@ const friends = new Friends();
 const rooms = new Map();   // roomId -> Map(id -> peer)
 const chat = new RoomChat((roomId, message) => { const room=rooms.get(roomId); if(room)broadcast(room,message); });
 setInterval(() => chat.tick(), 50).unref();
+const sports = new Sports(rooms,send,broadcast);
+setInterval(()=>sports.tick(),100).unref();
 let nextId = 1;
 
 const roomOf = (id) => {
@@ -94,7 +97,7 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, basketball: true, golf: true, sportsPads: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
@@ -188,9 +191,16 @@ wss.on('connection', (ws, req) => {
         num(m.s[10], -1.6, 1.6),     // optional aircraft pitch; old clients default to 0
         num(m.s[11], -3.2, 3.2),     // optional aircraft roll (a full barrel roll: ±π)
       ];
+      if(sports.protected(peer)){peer.s[7]=(peer.s[7]&~(4|8|16|64))|32;peer.s[8]=0;peer.s[4]=0;peer.s[6]=0;}
+      sports.basket.place(peer);
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
+    } else if (m.t === 'golf'){
+      sports.receive(peer,m);
+    } else if (m.t === 'basket'){
+      sports.basket.receive(peer,m);
     } else if (m.t === 'warfx'){
+      if(sports.protected(peer))return;
       // Cosmetic events only: retain existing hit validation, never apply damage here.
       const vec = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
       if (!peer.ready || (peer.s[7] & (16|128)) || !vec(m.o) || typeof m.id !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(m.id)) return;
@@ -217,16 +227,15 @@ wss.on('connection', (ws, req) => {
       if (now-(peer.ppWindow||0)>1000){peer.ppWindow=now;peer.ppCount=0;}
       if ((peer.ppCount=(peer.ppCount||0)+1)>40) return;
       const k = m.k; if (!['sit','stand','pad','shot','point','end'].includes(k)) return;
-      const out = { t:'pp', id:peer.id, k, tb: num(m.tb,0,1)|0, side: m.side ? 1 : 0 };
+      const out = sports.pp(peer,m); if(!out)return;
       const v3 = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite) ? v.map(x => num(x,-25,25)) : null;
-      if (k === 'sit') out.busy = m.busy ? 1 : 0;
-      else if (k === 'pad') out.c = num(m.c,-1.2,1.2);
+      if (k === 'pad') out.c = num(m.c,-1.2,1.2);
       else if (k === 'shot'){ out.p = v3(m.p); out.v = v3(m.v); if (!out.p || !out.v) return; out.n = num(m.n,0,500)|0; }
       if (k === 'shot' || k === 'point' || k === 'end'){
         if (Array.isArray(m.sc) && m.sc.length === 2 && m.sc.every(Number.isFinite)) out.sc = [num(m.sc[0],0,9)|0, num(m.sc[1],0,9)|0];
         else if (k === 'point') return;
       }
-      broadcastNear(room, peer, out);
+      if(k==='sit'||k==='stand')broadcast(room,out);else broadcastNear(room, peer, out);
     } else if (m.t === 'chat'){
       chat.receive(peer, m.text, message => send(ws,message));
     } else if (m.t === 'name'){
@@ -236,8 +245,9 @@ wss.on('connection', (ws, req) => {
       /* PvP : 쏜 쪽이 '맞혔다'고 알리면 맞은 쪽에게 그대로 전달한다.
          실제로 피가 깎일지는 맞은 쪽이 정한다 (부활 직후 무적이면 무시).
          서버는 판정하지 않는다 — 물리·시야가 전부 브라우저에 있기 때문이다. */
+      if(sports.protected(peer))return;
       const target = room.get(num(m.id, 0, 1e9) | 0);
-      if (target && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
+      if (target && !sports.protected(target) && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
         send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 63) | 0 });
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
@@ -245,6 +255,7 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'look', id: peer.id, v: peer.look }, peer.id);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
+      if(sports.protected(peer))return;
       broadcast(room, { t: 'dead', id: peer.id, by: num(m.by, 0, 1e9) | 0 }, null);
     } else if (m.t === 'auth' && !peer.uid && !peer.authing){
       /* 로그인 토큰 확인 → 친구 기능 켜기. 실패해도 게임(가까운 사람 보기)은 그대로 된다. */
@@ -290,6 +301,7 @@ wss.on('connection', (ws, req) => {
 
   const drop = () => {
     if (!room.has(peer.id)) return;
+    sports.drop(peer);
     room.delete(peer.id); friends.detach(peer);
     for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:"spawn",spawn:{random:true}});break;}
     broadcast(room, { t: 'bye', id: peer.id });
