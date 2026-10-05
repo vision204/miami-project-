@@ -97,7 +97,7 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, basketball: true, golf: true, sportsPads: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
@@ -220,6 +220,15 @@ wss.on('connection', (ws, req) => {
         const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<22000)?m.target:null;
         broadcast(room,{t:'warfx',from:peer.id,phase:'launch',id:m.id,kind:m.kind,o:m.o,d:m.d.map(v=>v/len),target},peer.id);
       } else if(m.phase==='impact') broadcast(room,{t:'warfx',from:peer.id,phase:'impact',id:m.id,o:m.o},peer.id);
+    } else if (m.t === 'sp'){
+      /* 골프 · 농구 슛 대결 (sp-1) : 가벼운 전달만 한다. 판정은 각자 브라우저가 한다.
+         보낸 사람 번호(id)는 서버가 붙이고, 값은 숫자 12개까지만 다시 만들어 보낸다. */
+      if (!peer.ready || (peer.s[7] & 128)) return;
+      if (now-(peer.spWindow||0)>1000){peer.spWindow=now;peer.spCount=0;}
+      if ((peer.spCount=(peer.spCount||0)+1)>30) return;
+      if (!['golf','hoop'].includes(m.g) || !['join','st','bye','sit','go','shot','sc'].includes(m.k) || !Array.isArray(m.d) || m.d.length>12) return;
+      const d = m.d.map(v => Number.isFinite(v) ? Math.max(-1e13, Math.min(1e13, v)) : 0);
+      broadcastNear(room, peer, { t:'sp', id:peer.id, g:m.g, k:m.k, d });
     } else if (m.t === 'pp'){
       /* 학교 탁구 (pp-1) : 경기 신호를 가까운 사람에게 전달만 한다. 판정은 브라우저가 한다(받는 쪽이 맞혔는지 스스로 정한다).
          값은 여기서 다시 만들어 보낸다 — 보낸 사람 번호(id)는 서버가 붙인다. */

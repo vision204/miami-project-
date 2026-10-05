@@ -15,4 +15,4 @@ services:
     envVars:
       - key: ALLOWED_ORIGINS
         # 배포한 게임 주소. 여러 개면 쉼표로 구분하고, 끝에 / 를 붙이지 마세요.
-        value: https://sexmoneymuder2.netlify.app
+        value: https://smm2online.com,https://www.smm2online.com,https://smm2online.netlify.app,http://localhost:8765,http://127.0.0.1:8765
