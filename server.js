@@ -27,7 +27,8 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
+const BUILD = 'ctune-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
+// const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
    Render 대시보드에서 ALLOWED_ORIGINS 환경변수로 지정한다.
@@ -97,7 +98,7 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
@@ -146,6 +147,7 @@ wss.on('connection', (ws, req) => {
        7:flags(1앉기 2공중 4조준 8발사 16사망 32무적) 8:무기 9:체력 */
     s: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100],
     look: null,                   // 캐릭터 외형 (팔레트 번호 배열)
+    ctune: null,                  // 탄 차 튜닝 (숫자 배열, 튜닝 샵 2026-10-08)
     uid: null, friends: new Set(),  // 로그인 확인 뒤 채운다
     seen: Date.now(),
     count: 0, window: Date.now(),
@@ -162,6 +164,7 @@ wss.on('connection', (ws, req) => {
     if (p.id !== peer.id){
       send(ws, { t: 'join', id: p.id, name: p.name });
       if (p.look) send(ws, { t: 'look', id: p.id, v: p.look });
+      if (p.ctune) send(ws, { t: 'ctune', id: p.id, v: p.ctune });
     }
   broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
 
@@ -262,6 +265,10 @@ wss.on('connection', (ws, req) => {
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
       peer.look = m.v.slice(0, 12).map(x => num(x, 0, 255) | 0);
       broadcast(room, { t: 'look', id: peer.id, v: peer.look }, peer.id);
+    } else if (m.t === 'ctune' && Array.isArray(m.v)){
+      /* 차 튜닝 (2026-10-08) : 색·휠·스포일러 같은 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
+      peer.ctune = m.v.slice(0, 16).map(x => num(x, 0, 255) | 0);
+      broadcast(room, { t: 'ctune', id: peer.id, v: peer.ctune }, peer.id);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
       if(sports.protected(peer))return;
