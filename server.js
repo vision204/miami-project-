@@ -27,7 +27,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'ctune-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
+const BUILD = 'motion-sale-2';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -98,9 +98,10 @@ const server = http.createServer((req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
+      snapshotSkips:OUT.skipped,
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
       total: [...rooms.values()].reduce((a, r) => a + r.size, 0),
       uptimeSec: Math.round(process.uptime()),
@@ -141,6 +142,7 @@ wss.on('connection', (ws, req) => {
     id: nextId++,
     ws, roomId,
     name: sanitizeName(url.searchParams.get('name')),
+    motion: url.searchParams.get('motion') === '1',
     bin: url.searchParams.get('bin') === '1',   // 새 화면만 압축 스냅샷을 받는다 (옛 화면은 예전 JSON 그대로)
     known: new Map(),
     /* 0:x 1:y 2:z 3:yaw 4:차량탑승 5:색 6:속도
@@ -192,7 +194,9 @@ wss.on('connection', (ws, req) => {
         num(m.s[8], 0, 63) | 0,       // 무기 (0~63 — 총 26정, tools/arsenal.js)
         num(m.s[9], 0, 100) | 0,      // 체력
         num(m.s[10], -1.6, 1.6),     // optional aircraft pitch; old clients default to 0
-        num(m.s[11], -3.2, 3.2),     // optional aircraft roll (a full barrel roll: ±π)
+        num(m.s[11], -3.2, 3.2),
+        num(m.s[12], -1.6, 1.6), // front-wheel steering
+        num(m.s[13], -600, 600), // signed longitudinal speed     // optional aircraft roll (a full barrel roll: ±π)
       ];
       if(sports.protected(peer)){peer.s[7]=(peer.s[7]&~(4|8|16|64))|32;peer.s[8]=0;peer.s[4]=0;peer.s[6]=0;}
       sports.basket.place(peer);
@@ -360,7 +364,7 @@ function broadcastNear(room, from, obj){
      아니면 (걷는 사람)      : i16 자세×10000
    받는 사람마다 '지난 틱에 무엇을 보냈는지' 기억한다. 지난 틱에 안 보낸 사람,
    값이 바뀐 사람, 2초가 지난 사람은 전체를 다시 보낸다. */
-const OUT = { bin: 0, json: 0 };
+const OUT = { bin: 0, json: 0, skipped: 0 };
 const q = (v, k, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v * k)));
 function packPeer(o){
   const s = o.s, long = !!s[4] || !!s[11], b = Buffer.allocUnsafe(long ? 23 : 19);
@@ -377,7 +381,11 @@ function packPeer(o){
     b.writeInt16LE(q(s[11] || 0, 10000, -32767, 32767), 21);
   } else b.writeInt16LE(q(s[10] || 0, 10000, -32767, 32767), 17);
   if (!o.pack || !o.pack.equals(b)){ o.pack = b; o.ver = (o.ver || 0) + 1; }
+  const motion=long?Buffer.concat([b,Buffer.alloc(4)]):b;
+  if(long){motion.writeInt16LE(q(s[12]||0,10000,-32767,32767),23);motion.writeInt16LE(q(s[13]||0,10,-32767,32767),25);}
+  if(!o.motionPack||!o.motionPack.equals(motion)){o.motionPack=motion;o.motionVer=(o.motionVer||0)+1;}
 }
+const SNAP_MOTION_HEAD=Buffer.from([2]);
 const SNAP_HEAD = Buffer.from([1]), REFRESH_TICKS = 30;
 
 /* ---------------------------------------------------------------------
@@ -392,7 +400,7 @@ setInterval(() => {
   const now = Date.now(), friendTick = (++tickNo % LIMITS.FRIEND_EVERY) === 0;
   for (const [roomId, room] of rooms){
     for (const p of [...room.values()]){
-      if (now - p.seen > LIMITS.IDLE_MS){ p.ws.close(1000, 'idle'); room.delete(p.id); friends.detach(p); }
+      if (now - p.seen > LIMITS.IDLE_MS){ p.ws.close(1000, 'idle'); /* close handler owns sports/friends/bye cleanup */ }
     }
     if (!room.size){ rooms.delete(roomId); chat.drop(roomId); continue; }
     if (room.size < 2) continue;
@@ -402,16 +410,18 @@ setInterval(() => {
     if (all.some(p => p.bin)) for (const o of all) if (o.ready) packPeer(o);
     for (const me of all){
       if (me.ws.readyState !== 1) continue;
+      if(me.ws.bufferedAmount>65536){OUT.skipped++;if(me.ws.bufferedAmount>1048576)me.ws.close(1013,'slow connection');continue;}
       if (me.bin){
-        const parts = [SNAP_HEAD], known = new Map();
+        const parts = [me.motion?SNAP_MOTION_HEAD:SNAP_HEAD], known = new Map();
         for (const o of all){
           if (o.id === me.id || !o.ready) continue;
           const dx = o.s[0] - me.s[0], dz = o.s[2] - me.s[2];
           if (me.ready && dx*dx + dz*dz > NEAR2) continue;
-          const k = me.known.get(o.id), full = !k || k.ver !== o.ver || tickNo - k.at >= REFRESH_TICKS;
+          const ver=me.motion?o.motionVer:o.ver;
+          const k = me.known.get(o.id), full = !k || k.ver !== ver || tickNo - k.at >= REFRESH_TICKS;
           const head = Buffer.allocUnsafe(4); head.writeUInt32LE(o.id * 2 + (full ? 1 : 0), 0);
-          parts.push(head); if (full) parts.push(o.pack);
-          known.set(o.id, full ? { ver: o.ver, at: tickNo } : k);
+          parts.push(head); if (full) parts.push(me.motion?o.motionPack:o.pack);
+          known.set(o.id, full ? { ver, at: tickNo } : k);
         }
         me.known = known;
         if (parts.length > 1){ const buf = Buffer.concat(parts); OUT.bin += buf.length; me.ws.send(buf); }
