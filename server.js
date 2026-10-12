@@ -196,7 +196,7 @@ wss.on('connection', (ws, req) => {
         num(m.s[10], -1.6, 1.6),     // optional aircraft pitch; old clients default to 0
         num(m.s[11], -3.2, 3.2),
         num(m.s[12], -1.6, 1.6), // front-wheel steering
-        num(m.s[13], -600, 600), // signed longitudinal speed     // optional aircraft roll (a full barrel roll: ±π)
+        Number.isFinite(m.s[13])?num(m.s[13], -600, 600):num(m.s[6], 0, 600), // signed longitudinal speed     // optional aircraft roll (a full barrel roll: ±π)
       ];
       if(sports.protected(peer)){peer.s[7]=(peer.s[7]&~(4|8|16|64))|32;peer.s[8]=0;peer.s[4]=0;peer.s[6]=0;}
       sports.basket.place(peer);
