@@ -8,6 +8,7 @@ import {EconomyError} from './economy-engine.js';
 export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=null,testVerify=null,observe=()=>null}={}){
  let store=testStore,auth=null,error=null;const enabled=process.env.ECONOMY_ENABLED==='1';
  if(enabled&&!store){try{
+  if(process.env.MIAMI_TEST_AUTH==='1'||process.env.FIRESTORE_EMULATOR_HOST||process.env.FIREBASE_AUTH_EMULATOR_HOST)throw Error('test authentication is forbidden for the production economy');
   const raw=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if(!raw&&!process.env.GOOGLE_APPLICATION_CREDENTIALS)throw Error('credentials missing');
   const credentials=raw?JSON.parse(raw):null;if(credentials&&credentials.project_id!==projectId)throw Error('project mismatch');
