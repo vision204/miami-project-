@@ -21,13 +21,14 @@ import { RoomChat } from './chat.js';
 import { Sports } from './sports.js';
 import { Friends, validUid } from './friends.js';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createEconomyHttp } from './economy-http.js';
 
 const PORT = process.env.PORT || 8080;
 
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'motion-sale-2';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
+const BUILD = 'economy-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -92,7 +93,9 @@ const num = (v, lo, hi) => {
 /* ---------------------------------------------------------------------
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
-const server = http.createServer((req, res) => {
+const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],at:p.stateAt};return null;}});
+const server = http.createServer(async (req, res) => {
+  if(await economy.handle(req,res))return;
   if (req.url === '/healthz'){ res.writeHead(200); res.end('ok'); return; }
   if (req.url === '/stats'){
     const body = JSON.stringify({
@@ -101,7 +104,7 @@ const server = http.createServer((req, res) => {
       build: BUILD, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
-      snapshotSkips:OUT.skipped,
+      snapshotSkips:OUT.skipped,economy:economy.status(),
       rooms: [...rooms].map(([id, r]) => ({ id, players: r.size })),
       total: [...rooms.values()].reduce((a, r) => a + r.size, 0),
       uptimeSec: Math.round(process.uptime()),
@@ -202,6 +205,7 @@ wss.on('connection', (ws, req) => {
       sports.basket.place(peer);
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
+      peer.stateAt=now;economy.observe(peer.uid,peer.s);
     } else if (m.t === 'golf'){
       sports.receive(peer,m);
     } else if (m.t === 'basket'){
@@ -304,6 +308,7 @@ wss.on('connection', (ws, req) => {
       const r = friends.remove(peer, uid);
       for (const p of r.notify || []) send(p.ws, { t: 'fdel', uid: peer.uid });
     } else if (m.t === 'cash'){
+      if(economy.status().enabled){if(peer.uid)economy.balance(peer.uid).then(v=>{peer.cash=v;}).catch(()=>{});return;}
       /* 서버 순위표 : 각자 자기 돈을 알린다 (조작은 막을 수 없다 — 표시용) */
       peer.cash = Math.floor(num(m.v, 0, 1e12));
     } else if (m.t === 'rank'){

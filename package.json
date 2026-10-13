@@ -5,13 +5,14 @@
   "type": "module",
   "description": "MIAMI 멀티플레이 위치 중계 서버",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.18.0",
-    "jose": "^5.9.6"
+    "firebase-admin": "^14.5.0",
+    "jose": "^5.9.6",
+    "ws": "^8.18.0"
   }
 }
