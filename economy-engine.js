@@ -29,6 +29,16 @@ export function assetSlots(p){
 export function migrateAccount(legacy,catalog,now=Date.now(),uuid=randomUUID){
  // Never accept a browser migration payload. Caller supplies a database snapshot.
  const p=copy(legacy?.save?.property||{cash:5000,homes:[],guns:['fists']});
+ // Older game snapshots wrote each AURELIS garage both in cars[id] and
+ // pent.cars[floor]. Collapse only these aliases, retaining genuine multiples.
+ for(const [id,rows]of Object.entries(p.cars||{})){
+  const match=/^aurelis-ph-(\d+)$/.exec(id);if(!match||!Array.isArray(rows))continue;
+  p.pent??={owned:[],cars:{}};p.pent.cars??={};const canonical=p.pent.cars[match[1]]??=[];
+  const signature=r=>JSON.stringify([r.a??null,r.k,r.c,r.p??null,r.f??null,r.t??null]);
+  const remaining=new Map();for(const r of canonical){const key=signature(r);remaining.set(key,(remaining.get(key)||0)+1);}
+  for(const r of rows){const key=signature(r),n=remaining.get(key)||0;if(n)remaining.set(key,n-1);else canonical.push(r);}
+  delete p.cars[id];
+ }
  if(!money(p.cash))fail('migration-review','기존 잔액을 관리자에게 확인해야 합니다.',409);
  const seen=new Set();for(const {r,where} of assetSlots(p)){
   if(!r.a||seen.has(r.a))r.a=uuid();seen.add(r.a);
