@@ -41,5 +41,5 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   }catch(e){const known=e instanceof EconomyError;send(res,known?e.status:503,{ok:false,code:known?e.code:'storage-unavailable',message:known?e.message:'서버 저장을 완료하지 못했습니다. 같은 거래로 다시 시도해 주세요.'});}
   return true;
  }
- return {handle,status:()=>({protocol:1,configured,available,configuration:error}),balance,observe:(uid,s)=>{if(available&&uid)store.missions?.observe(uid,s);}};
+ return {heistProtected:uid=>{const r=store?.heists?.get(uid);return !!r&&!['done','failed'].includes(r.phase);},heistTick:()=>store?.heists?.tick(),heistState:uid=>available?store.heists?.snapshot(uid):null,heistAction:(uid,m)=>available?store.heists?.action(uid,m):null,handle,status:()=>({protocol:1,enabled:enabled||!!testStore,configured,available,configuration:error}),balance,observe:(uid,s)=>{if(available&&uid){store.missions?.observe(uid,s);store.heists?.observe(uid,s);}}};
 }

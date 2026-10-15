@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';import WebSocket from 'ws';import assert from 'node:assert/strict';
-const srv=spawn('node',['server.js'],{env:{...process.env,PORT:'8798',MIAMI_TEST_AUTH:'1'},stdio:'inherit'});
-await new Promise(r=>setTimeout(r,800));
+import { spawn } from 'node:child_process';import {once} from 'node:events';import {fileURLToPath} from 'node:url';import WebSocket from 'ws';import assert from 'node:assert/strict';
+const srv=spawn(process.execPath,['server.js'],{cwd:fileURLToPath(new URL('.',import.meta.url)),env:{...process.env,PORT:'8798',MIAMI_TEST_AUTH:'1'},stdio:'inherit'});
+for(let n=0;n<100;n++){try{if((await fetch('http://127.0.0.1:8798/healthz')).ok)break;}catch{}if(n===99)throw Error('Test server failed to start');await new Promise(r=>setTimeout(r,100));}
 const mk=(name,uid,pos)=>new Promise(res=>{const ws=new WebSocket(`ws://localhost:8798/?room=lobby&name=${name}`);const c={ws,name,got:[],snaps:[],fr:[]};
  ws.on('message',d=>{const m=JSON.parse(d);c.got.push(m);if(m.t==='snap')c.snaps.push(m.a.map(x=>x[0]));if(m.t==='fr')c.fr.push(m.a);if(m.t==='welcome')c.id=m.id;if(m.t==='authok')c.code=m.code;});
  ws.on('open',()=>{c.pos=pos;c.send=o=>ws.send(JSON.stringify(o));c.tick=setInterval(()=>c.send({t:'s',s:[c.pos[0],10,c.pos[1],0,0,0,0,0,0,100]}),60);c.send({t:'auth',token:'test:'+uid,friends:[]});res(c);});});
@@ -32,4 +32,4 @@ const E=await new Promise(res=>{const ws=new WebSocket('ws://localhost:8798/?roo
 assert.ok(E.some(m=>m.t==='authfail'),'bad token refused');
 const st=await (await fetch('http://localhost:8798/stats')).json();console.log(JSON.stringify(st));
 console.log('PASS relay: near-only snapshots, friend code request/accept/decline/remove, far friend 1Hz, one-sided list ignored, bad token refused');
-for(const c of [A,B,C,D]){clearInterval(c.tick);c.ws.close();}srv.kill();process.exit(0);
+for(const c of [A,B,C,D]){clearInterval(c.tick);c.ws.close();}const closed=once(srv,'close');srv.kill();await closed;

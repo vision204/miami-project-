@@ -1,15 +1,17 @@
 // node test-snap.mjs — 압축 스냅샷이 JSON 스냅샷과 같은 값을 주는지, 얼마나 줄었는지 본다.
-import { spawn } from 'child_process';
+import { spawn } from 'child_process';import {once} from 'node:events';
+import {fileURLToPath} from 'node:url';
 import { readFileSync } from 'fs';
 import assert from 'assert';
 import { WebSocket } from 'ws';
 const src = readFileSync(new URL('../assets/cloud/mp.js', import.meta.url), 'utf8');
 const fn = src.slice(src.indexOf('function unpackSnap'), src.indexOf('function connect(){'));
 const unpackSnap = new Function(fn + ';return unpackSnap;')();
-const PORT = 18000 + Math.floor(Math.random() * 900), srv = spawn(process.execPath, ['server.js'], { cwd: new URL('.', import.meta.url).pathname, env: { ...process.env, PORT, ALLOWED_ORIGINS: '' }, stdio: 'ignore' });
+const PORT = 18000 + Math.floor(Math.random() * 900), srv = spawn(process.execPath, ['server.js'], { cwd: fileURLToPath(new URL('.', import.meta.url)), env: { ...process.env, PORT, ALLOWED_ORIGINS: '' }, stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
-await wait(900);
-const open = (name, bin) => new Promise(res => { const ws = new WebSocket(`ws://localhost:${PORT}/?room=t&name=${name}${bin ? '&bin=1' : ''}`); ws.binaryType = 'arraybuffer';
+for(let n=0;n<100;n++){try{if((await fetch('http://127.0.0.1:'+PORT+'/healthz')).ok)break;}catch{}if(n===99)throw Error('Test server failed to start');await wait(100);}
+const sockets=[];
+const open = (name, bin) => new Promise(res => { const ws = new WebSocket(`ws://localhost:${PORT}/?room=t&name=${name}${bin ? '&bin=1' : ''}`); ws.binaryType = 'arraybuffer';sockets.push(ws);
   const c = { ws, id: 0, bytes: 0, snaps: 0, peers: new Map() };
   ws.on('message', (d, isBin) => { if (isBin){ c.bytes += d.byteLength; c.snaps++; const ab = d instanceof ArrayBuffer ? d : d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
       for (const a of unpackSnap(ab, id => c.peers.get(id) || null)) c.peers.set(a[0], { x:a[1],y:a[2],z:a[3],yaw:a[4],car:a[5],col:a[6],spd:a[7],f:a[8],w:a[9],hp:a[10],pitch:a[11],roll:a[12], raw:a });
@@ -49,5 +51,4 @@ try {
   assert(late.peers.get(walker.id)?.hp === 83 && late.peers.get(driver.id)?.car === 1, 'late joiner sees everyone');
   const stats = await (await fetch(`http://localhost:${PORT}/stats`)).json(); assert(stats.bin === true && stats.snapMB);
   console.log('PASS snapshots: moving', mv.json, '→', mv.bin, 'bytes (' + (mv.json / mv.bin).toFixed(1) + 'x) · standing', idle.json, '→', idle.bin, 'bytes (' + (idle.json / idle.bin).toFixed(1) + 'x)');
-} finally { for (const c of [oldC, newC, walker, driver]) c.ws.close(); srv.kill(); }
-process.exit(0);
+} finally { for (const ws of sockets)ws.terminate();const closed=once(srv,'close');srv.kill();await closed; }

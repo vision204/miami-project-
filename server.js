@@ -28,7 +28,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'economy-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
+const BUILD = 'heist-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -94,6 +94,7 @@ const num = (v, lo, hi) => {
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
 const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],at:p.stateAt};return null;}});
+setInterval(()=>economy.heistTick(),100).unref();
 const server = http.createServer(async (req, res) => {
   if(await economy.handle(req,res))return;
   if (req.url === '/healthz'){ res.writeHead(200); res.end('ok'); return; }
@@ -101,7 +102,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -206,12 +207,17 @@ wss.on('connection', (ws, req) => {
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
       peer.stateAt=now;economy.observe(peer.uid,peer.s);
+      if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.heistSentAt||0)>200){peer.heistSentAt=now;const state=economy.heistState(peer.uid);if(state||peer.hadHeist){send(peer.ws,{t:'heist',state});peer.hadHeist=!!state;}}
+    } else if (m.t === 'heist'){
+      if(!peer.uid||!peer.ready)return;
+      if(now-(peer.heistActionAt||0)<80)return;peer.heistActionAt=now;
+      const state=economy.heistAction(peer.uid,m);send(peer.ws,{t:'heist',state});
     } else if (m.t === 'golf'){
       sports.receive(peer,m);
     } else if (m.t === 'basket'){
       sports.basket.receive(peer,m);
     } else if (m.t === 'warfx'){
-      if(sports.protected(peer))return;
+      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
       // Cosmetic events only: retain existing hit validation, never apply damage here.
       const vec = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
       if (!peer.ready || (peer.s[7] & (16|128)) || !vec(m.o) || typeof m.id !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(m.id)) return;
@@ -265,9 +271,9 @@ wss.on('connection', (ws, req) => {
       /* PvP : 쏜 쪽이 '맞혔다'고 알리면 맞은 쪽에게 그대로 전달한다.
          실제로 피가 깎일지는 맞은 쪽이 정한다 (부활 직후 무적이면 무시).
          서버는 판정하지 않는다 — 물리·시야가 전부 브라우저에 있기 때문이다. */
-      if(sports.protected(peer))return;
+      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
       const target = room.get(num(m.id, 0, 1e9) | 0);
-      if (target && !sports.protected(target) && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
+      if (target && !sports.protected(target) && !economy.heistProtected(target.uid) && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
         send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 63) | 0 });
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
@@ -279,7 +285,7 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'ctune', id: peer.id, v: peer.ctune }, peer.id);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
-      if(sports.protected(peer))return;
+      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
       broadcast(room, { t: 'dead', id: peer.id, by: num(m.by, 0, 1e9) | 0 }, null);
     } else if (m.t === 'auth' && !peer.uid && !peer.authing){
       /* 로그인 토큰 확인 → 친구 기능 켜기. 실패해도 게임(가까운 사람 보기)은 그대로 된다. */

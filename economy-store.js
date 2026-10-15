@@ -2,10 +2,16 @@ import {createHash} from 'node:crypto';
 import {applyCommand,applyProgress,migrateAccount,EconomyError} from './economy-engine.js';
 import {MissionMonitor} from './economy-missions.js';
 import {EconomyPlanner} from './economy-planner.js';
+import {Heists} from './heists.js';
 
 export class EconomyStore {
- constructor(db,catalog,{observe=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();}
+ constructor(db,catalog,{observe=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.heists=new Heists({fleet:catalog.fleet});}
  async execute(uid,request){
+  const starting=request?.command?.type==='heist.start';
+  if(starting){try{this.heists.reserve(uid);}catch(e){throw new EconomyError('heist-busy',e.message,409);}}
+  try{return await this.executeReserved(uid,request);}finally{if(starting)this.heists.release(uid);}
+ }
+ async executeReserved(uid,request){
   if(!/^[A-Za-z0-9_-]{1,128}$/.test(uid))throw new EconomyError('unauthorized','로그인이 필요합니다.',401);
   const id=request?.id;if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{16,100}$/.test(id))throw new EconomyError('invalid-request-id','거래 식별자가 필요합니다.');
   const hash=createHash('sha256').update(JSON.stringify(request)).digest('hex');
@@ -13,7 +19,7 @@ export class EconomyStore {
   const observation=this.observe(uid);let plan=null;if(request.command?.type==='job.start'){
    if(!['delivery','freight','taxi','race','air'].includes(request.command.job))throw new EconomyError('invalid-job','없는 일거리입니다.');
    const prior=await receipt.get();if(!prior.exists){
-    const current=(await ref.get()).data();if(!current||request.version!==current.version)throw new EconomyError('version-conflict','계정 거래 정보를 다시 불러와 주세요.',409);
+    const current=(await ref.get()).data();if(current?.heist?.active)throw new EconomyError('job-active','진행 중인 습격을 먼저 종료하세요.',409);if(!current||request.version!==current.version)throw new EconomyError('version-conflict','계정 거래 정보를 다시 불러와 주세요.',409);
     if(current.work?.active?.expiresAt>Date.now()||(current.work?.next?.[request.command.job]||0)>Date.now())throw new EconomyError('job-active','진행 중인 임무 또는 대기시간이 남았습니다.',409);
     if(!observation||Date.now()-observation.at>5000)throw new EconomyError('relay-required','멀티플레이 서버에 연결한 뒤 시작해 주세요.',409);
     if(this.planning.has(uid)&&this.planning.get(uid).id!==id)throw new EconomyError('planner-busy','이전 업무 경로를 준비 중입니다.',409);
@@ -34,7 +40,7 @@ export class EconomyStore {
    if(request.version!==account.version)throw new EconomyError('version-conflict','다른 창에서 거래가 변경되었습니다. 다시 확인해 주세요.',409);
    let out;
    if(request.type==='save')out=applyProgress(account,request.save,this.catalog);
-   else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),coupons:this.coupons,observation});
+   else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),coupons:this.coupons,observation:this.observe(uid)});
    account=out.account;
    if(Buffer.byteLength(JSON.stringify(account))>750000)throw new EconomyError('account-too-large','계정 저장 한도를 관리자에게 확인해 주세요.',409);
    tx.set(ref,account);
@@ -46,6 +52,8 @@ export class EconomyStore {
   });
   if(request.command?.type==='job.start'&&output.account.work?.active)this.missions.start(uid,output.account.work.active);
   if(request.command?.type==='job.settle')this.missions.clear(uid,request.command.run);
+  if(request.command?.type==='heist.start'&&output.account.heist?.active?.id===request.command.run)this.heists.start(uid,output.account.heist.active,this.observe(uid));
+  if(request.command?.type==='heist.settle')this.heists.clear(uid,request.command.run);
   return output;
  }
  async balance(uid){const s=await this.db.doc('economyAccounts/'+uid).get();return s.exists?s.data().property?.cash:null;}
