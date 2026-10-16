@@ -52,7 +52,7 @@ export class EconomyStore {
   });
   if(request.command?.type==='job.start'&&output.account.work?.active)this.missions.start(uid,output.account.work.active);
   if(request.command?.type==='job.settle')this.missions.clear(uid,request.command.run);
-  if(request.command?.type==='heist.start'&&output.account.heist?.active?.id===request.command.run)this.heists.start(uid,output.account.heist.active,this.observe(uid));
+  if(request.command?.type==='heist.start'&&output.account.heist?.active?.id===request.command.run)this.heists.start(uid,output.account.heist.active,this.observe(uid),output.account.property?.armor||0);
   if(request.command?.type==='heist.settle')this.heists.clear(uid,request.command.run);
   return output;
  }
