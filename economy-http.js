@@ -25,7 +25,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   if(!req.url?.split('?')[0].startsWith('/economy/'))return false;
   const origin=req.headers.origin;if(origin){if(!allowed.includes(origin)){send(res,403,{ok:false,code:'origin-denied'});return true;}res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
   if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','POST, GET, OPTIONS');res.writeHead(204);res.end();return true;}
-  if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,enabled:enabled||!!testStore,configured,available,configuration:error});return true;}
+  if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,golfSets:1,enabled:enabled||!!testStore,configured,available,configuration:error});return true;}
   if(req.url!=='/economy/transaction'||req.method!=='POST'){send(res,404,{ok:false,code:'not-found'});return true;}
   if(!available){send(res,503,{ok:false,code:'economy-unavailable',message:'서버 거래 연결을 준비 중입니다.'});return true;}
   try{

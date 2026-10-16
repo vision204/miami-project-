@@ -1,6 +1,7 @@
 import {randomUUID, randomInt} from 'node:crypto';
 import {JOBS,jobPayout,cleanJobSave} from './economy-job-core.js';
 import {TIDE,distance} from './heist-layout.js';
+import {GOLF_SETS} from './golf-items.js';
 
 export class EconomyError extends Error {
   constructor(code, message, status=400){super(message);this.code=code;this.status=status;}
@@ -49,6 +50,7 @@ export function migrateAccount(legacy,catalog,now=Date.now(),uuid=randomUUID){
  }
  if(!p.starter?.given&&!list(p.homes).length&&!list(p.pent?.owned).length){const k=entry(catalog.vehicles,catalog.starter);p.starter={given:true,car:{a:uuid(),k:k.id,p:0,c:0xf2f2f0,f:k.fuel?.capacity??null}};}
  p.guns=[...new Set(['fists',...list(p.guns)])];
+ p.golf={owned:[],equipped:'rental'};
  return {schema:1,version:0,property:p,work:copy(legacy?.work||{}),coupons:copy(legacy?.redeemedCoupons||{}),migratedAt:now,migrationSource:'players-database',updatedAt:now};
 }
 function garage(p,c,id,type){
@@ -66,6 +68,8 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
  const s=copy(account),p=s.property;let spent=0,result={};
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
  switch(cmd.type){
+ case 'buy.golf':{const q=entry(GOLF_SETS,cmd.id);p.golf??={owned:[],equipped:'rental'};if(owns(p.golf.owned,q.id))fail('already-owned','이미 보유한 골프채 세트입니다.',409);spent=charge(s,q.price);add(p.golf,'owned',q.id);p.golf.equipped=q.id;break;}
+ case 'equip.golf':{p.golf??={owned:[],equipped:'rental'};if(cmd.id!=='rental'){entry(GOLF_SETS,cmd.id);if(!owns(p.golf.owned,cmd.id))fail('not-owner','구매한 골프채만 장착할 수 있습니다.',403);}p.golf.equipped=cmd.id;break;}
  case 'heist.start':{if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-heist','작업 식별자가 필요합니다.');if(s.heist?.active||s.work?.active?.expiresAt>now)fail('job-active','진행 중인 작업을 먼저 종료하세요.',409);if(!observation||now-observation.at>1500||observation.car||distance(observation,TIDE.start)>7||Math.abs(observation.y-TIDE.y)>2)fail('heist-location','항구 집결지에서 하차한 뒤 시작하세요.',409);s.heist={...(s.heist||{}),active:{id:cmd.run,type:TIDE.id,startedAt:now}};result={active:s.heist.active};break;}
  case 'heist.settle':{const h=s.heist||{},a=h.active;if(!a||a.id!==cmd.run){if(h.last?.id===cmd.run){result={reward:0,already:true};break;}fail('invalid-heist','진행 중인 습격이 아닙니다.',409);}let reward=0;if(cmd.completed){if(!heistProof?.valid||heistProof.id!==a.id)fail('heist-unverified','서버에서 회수와 탈출을 확인하지 못했습니다.',409);reward=heistProof.reward;if(![TIDE.reward,TIDE.reward+10000].includes(reward))fail('heist-unverified','보상을 확인할 수 없습니다.',409);credit(s,reward);}s.heist={active:null,last:{id:a.id,completed:!!cmd.completed,reward,seconds:cmd.completed?heistProof.seconds:null,at:now},best:cmd.completed?Math.min(h.best||Infinity,heistProof.seconds):h.best||null};result={reward,heist:s.heist};break;}
  case 'vehicle.use':{const a=asset(p,cmd.asset);if(a.r.k!==cmd.kind)fail('forged-assets','차종과 서버 소유권이 일치하지 않습니다.',403);result={asset:a.r};break;}
