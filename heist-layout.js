@@ -20,6 +20,10 @@ export const TIDE={id:'black-tide-v1',name:'블랙 타이드',reward:60000,y:2.7
  // 보석을 꺼내면 다리 입구에 한 번만 나오는 증원 2명
  reinforce:[[2404,-1515,3.14],[2404,-1505,3.14]]};
 export const distance=(a,b)=>Math.hypot(a.x-b[0],a.z-b[1]);
+// Shared authoritative sight rules; the floor overlay uses the same range and angle.
+export const GUARD_SIGHT=Object.freeze({version:1,range:40,alarmRange:75,cosHalfAngle:.5,reactionMs:650});
+export function guardSees(g,p,alarm=false){if(g.hp<=0)return false;const dx=p.x-g.x,dz=p.z-g.z,d=Math.hypot(dx,dz);return d<(alarm?GUARD_SIGHT.alarmRange:GUARD_SIGHT.range)&&(alarm||(Math.cos(g.yaw)*dx+Math.sin(g.yaw)*dz)/Math.max(1,d)>GUARD_SIGHT.cosHalfAngle)&&visible([g.x,TIDE.y+1.45,g.z],[p.x,p.y+1,p.z]);}
+export function sightBoundary(g,alarm=false,segments=96){const range=alarm?GUARD_SIGHT.alarmRange:GUARD_SIGHT.range,half=alarm?Math.PI:Math.acos(GUARD_SIGHT.cosHalfAngle),angles=Array.from({length:segments+1},(_,i)=>-half+2*half*i/segments);for(const [x,z,w,d]of TIDE.walls)for(const sx of [-1,1])for(const sz of [-1,1]){const a=Math.atan2(z+sz*(d/2+.045)-g.z,x+sx*(w/2+.045)-g.x)-g.yaw,t=Math.atan2(Math.sin(a),Math.cos(a));for(const e of [-.00002,0,.00002])if(t+e>-half&&t+e<half)angles.push(t+e);}angles.sort((a,b)=>a-b);return angles.map(t=>{const a=g.yaw+t,dir=[Math.cos(a),0,Math.sin(a)],r=Math.max(0,wallDistance([g.x,TIDE.y+1.45,g.z],dir,range,-.045)-.025);return [g.x+dir[0]*r,g.z+dir[2]*r];});}
 export const contractFloor=(x,z,margin=0)=>TIDE.decks.some(([a,b,w,d])=>Math.abs(x-a)<=w/2+margin&&Math.abs(z-b)<=d/2+margin)?TIDE.y:null;
 export function rayBox(o,d,box,max=Infinity,shrink=0){let near=0,far=max;const [x,z,w,l,h]=box,lo=[x-w/2+shrink,TIDE.y,z-l/2+shrink],hi=[x+w/2-shrink,TIDE.y+h,z+l/2-shrink];if(lo[0]>hi[0]||lo[2]>hi[2])return null;for(let i=0;i<3;i++){if(Math.abs(d[i])<1e-8){if(o[i]<lo[i]||o[i]>hi[i])return null;}else{let a=(lo[i]-o[i])/d[i],b=(hi[i]-o[i])/d[i];if(a>b)[a,b]=[b,a];near=Math.max(near,a);far=Math.min(far,b);if(near>far)return null;}}return near;}
 export function wallDistance(o,d,max,shrink=0){let n=max;for(const box of TIDE.walls){const t=rayBox(o,d,box,n,shrink);if(t!==null)n=t;}return n;}
