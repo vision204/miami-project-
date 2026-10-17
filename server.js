@@ -28,7 +28,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'heist-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
+const BUILD = 'fishing-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -93,8 +93,8 @@ const num = (v, lo, hi) => {
 /* ---------------------------------------------------------------------
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
-const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],at:p.stateAt};return null;}});
-setInterval(()=>economy.heistTick(),100).unref();
+const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+setInterval(()=>{economy.heistTick();economy.fishingTick();},100).unref();
 const server = http.createServer(async (req, res) => {
   if(await economy.handle(req,res))return;
   if (req.url === '/healthz'){ res.writeHead(200); res.end('ok'); return; }
@@ -208,6 +208,10 @@ wss.on('connection', (ws, req) => {
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
       peer.stateAt=now;economy.observe(peer.uid,peer.s);
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.heistSentAt||0)>200){peer.heistSentAt=now;const state=economy.heistState(peer.uid);if(state||peer.hadHeist){send(peer.ws,{t:'heist',state});peer.hadHeist=!!state;}}
+      if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.fishingSentAt||0)>150){peer.fishingSentAt=now;const state=economy.fishingState(peer.uid);if(state||peer.hadFishing){send(peer.ws,{t:'fish',state});peer.hadFishing=!!state;}}
+    } else if (m.t === 'fish'){
+      if(!peer.uid||!peer.ready)return;if(now-(peer.fishingActionAt||0)<70&&!m.hook&&m.k!=='cancel')return;peer.fishingActionAt=now;
+      const state=economy.fishingAction(peer.uid,m);send(peer.ws,{t:'fish',state});
     } else if (m.t === 'heist'){
       if(!peer.uid||!peer.ready)return;
       if(now-(peer.heistActionAt||0)<80)return;peer.heistActionAt=now;

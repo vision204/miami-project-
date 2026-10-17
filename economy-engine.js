@@ -1,6 +1,7 @@
 import {randomUUID, randomInt} from 'node:crypto';
 import {JOBS,jobPayout,cleanJobSave} from './economy-job-core.js';
 import {TIDE,distance} from './heist-layout.js';
+import{RODS,DOCKS,zoneAt,rollFish,fishById,payout}from'./fishing-catalog.js';
 import {GOLF_SETS} from './golf-items.js';
 
 export class EconomyError extends Error {
@@ -63,14 +64,32 @@ function tuneClean(t={}){const out={};for(const [k,max] of Object.entries({f:2,w
 export function tuningCost(o,n,P){let v=0;const a=o.t||{},b=n.t||{};if(n.c!==o.c)v+=P.paint;for(const k of ['f','s','l'])if((a[k]||0)!==(b[k]||0))v+=P[k][b[k]||0];if((a.w||0)!==(b.w||0))v+=P.w;for(const k of ['n','pl'])if((b[k]||'')!==(a[k]||'')&&b[k])v+=P[k];for(const k of ['e','x','b','y','u'])for(let i=(a[k]||0)+1;i<=(b[k]||0);i++)v+=P[k][i];for(const k of ['tb','ni','ap','fx'])if(b[k]&&!a[k])v+=P[k]||0;if((b.rc||0)!==(a.rc||0)&&b.rc)v+=P.rc||0;if(((b.wr||0)!==(a.wr||0)||(b.wc||0)!==(a.wc||0))&&b.wr)v+=P.wr||0;return v;}
 
 // The server accepts intents, never client totals, cash, ownership lists or paid prices.
-export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,heistProof=null,coupons={},observation=null}={}){
+export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
  if(!account||account.schema!==1)fail('invalid-account','계정 원장을 불러올 수 없습니다.',503);
  const s=copy(account),p=s.property;let spent=0,result={};
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
  switch(cmd.type){
+ case 'buy.rod':{const q=entry(RODS,cmd.id);if(!observation||now-observation.at>2000||!DOCKS.some(d=>Math.hypot(d.x-observation.x,d.z-observation.z)<5.5&&Math.abs(d.y-observation.y)<3)||observation.car)fail('fishing-shop-location','부두 낚시 상인 앞에서 구매해 주세요.',409);p.fishing??={owned:[],equipped:null};if(owns(p.fishing.owned,q.id))fail('already-owned','이미 가진 낚싯대입니다.',409);spent=charge(s,q.price);add(p.fishing,'owned',q.id);p.fishing.equipped=q.id;break;}
+ case 'equip.rod':{entry(RODS,cmd.id);if(!owns(p.fishing?.owned,cmd.id))fail('not-owner','구매한 낚싯대만 장착할 수 있어요.',403);p.fishing.equipped=cmd.id;break;}
+ case 'fishing.start':{
+  if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-fishing','낚시 식별자를 확인해 주세요.');
+  if(s.heist?.active||s.work?.active?.expiresAt>now||s.fishing?.active?.expiresAt>now)fail('job-active','진행 중인 낚시나 작업을 먼저 끝내세요.',409);
+  const rod=RODS.find(r=>r.id===p.fishing?.equipped);if(!rod||!owns(p.fishing?.owned,rod.id))fail('rod-required','먼저 부두 상인에게 낚싯대를 구매하세요.',409);
+  const o=observation,K=catalog.vehicles?.[o?.kind],boat=o?.car&&K?.type==='boat',target=cmd.target;
+  if(!o||now-o.at>1500||!Number.isFinite(o.speed)||Math.abs(o.speed)>.35||(o.flags&18)||o.hp<=0||(o.car&&!boat)||o.y<(boat?-2:-.1)||o.y>(boat?18:5))fail('fishing-location','물가나 정박한 배 위에서 멈춰 낚시하세요.',409);
+  if(!Array.isArray(target)||target.length!==2||!target.every(Number.isFinite))fail('fishing-water','물 위를 향해 던지세요.');
+  const range=Math.hypot(target[0]-o.x,target[1]-o.z),zone=zoneAt(...target);if(!zone||range<3||range>rod.range+1)fail('fishing-water','낚싯대 사거리 안의 수면을 선택하세요.',409);
+  const caught=rollFish(zone,roll);s.fishing={...(s.fishing||{}),active:{id:cmd.run,rod:rod.id,zone,target,origin:{x:o.x,y:o.y,z:o.z},startedAt:now,biteAt:now+6000+roll(6000),expiresAt:now+125000,catch:caught}};result={active:s.fishing.active};break;
+ }
+ case 'fishing.settle':{
+  const f=s.fishing||{},a=f.active;if(!a||a.id!==cmd.run){if(f.last?.id===cmd.run){result={reward:0,already:true,catch:f.last.catch};break;}fail('invalid-fishing','진행 중인 낚시가 아닙니다.',409);}
+  let caught=null,reward=0;if(cmd.completed===true){if(!fishingProof?.valid||fishingProof.id!==a.id||JSON.stringify(fishingProof.catch)!==JSON.stringify(a.catch))fail('fishing-unverified','서버에서 포획을 확인하지 못했습니다.',409);caught=a.catch;const fish=fishById(caught.fish);reward=payout(fish,caught.grams);credit(s,reward);f.records??={};const r=f.records[fish.id]||{count:0,grams:0,length:0};f.records[fish.id]={count:r.count+1,grams:Math.max(r.grams,caught.grams),length:Math.max(r.length,caught.length)};f.total=(f.total||0)+1;f.earnings=(f.earnings||0)+reward;}
+  s.fishing={...f,active:null,last:{id:a.id,catch:caught,reward,at:now}};result={catch:caught,reward};break;
+ }
+
  case 'buy.golf':{const q=entry(GOLF_SETS,cmd.id);p.golf??={owned:[],equipped:'rental'};if(owns(p.golf.owned,q.id))fail('already-owned','이미 보유한 골프채 세트입니다.',409);spent=charge(s,q.price);add(p.golf,'owned',q.id);p.golf.equipped=q.id;break;}
  case 'equip.golf':{p.golf??={owned:[],equipped:'rental'};if(cmd.id!=='rental'){entry(GOLF_SETS,cmd.id);if(!owns(p.golf.owned,cmd.id))fail('not-owner','구매한 골프채만 장착할 수 있습니다.',403);}p.golf.equipped=cmd.id;break;}
- case 'heist.start':{if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-heist','작업 식별자가 필요합니다.');if(s.heist?.active||s.work?.active?.expiresAt>now)fail('job-active','진행 중인 작업을 먼저 종료하세요.',409);if(!observation||now-observation.at>1500||observation.car||distance(observation,TIDE.start)>7||Math.abs(observation.y-TIDE.y)>2)fail('heist-location','항구 집결지에서 하차한 뒤 시작하세요.',409);s.heist={...(s.heist||{}),active:{id:cmd.run,type:TIDE.id,startedAt:now}};result={active:s.heist.active};break;}
+ case 'heist.start':{if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-heist','작업 식별자가 필요합니다.');if(s.heist?.active||s.work?.active?.expiresAt>now||s.fishing?.active?.expiresAt>now)fail('job-active','진행 중인 작업을 먼저 종료하세요.',409);if(!observation||now-observation.at>1500||observation.car||distance(observation,TIDE.start)>7||Math.abs(observation.y-TIDE.y)>2)fail('heist-location','항구 집결지에서 하차한 뒤 시작하세요.',409);s.heist={...(s.heist||{}),active:{id:cmd.run,type:TIDE.id,startedAt:now}};result={active:s.heist.active};break;}
  case 'heist.settle':{const h=s.heist||{},a=h.active;if(!a||a.id!==cmd.run){if(h.last?.id===cmd.run){result={reward:0,already:true};break;}fail('invalid-heist','진행 중인 습격이 아닙니다.',409);}let reward=0;if(cmd.completed){if(!heistProof?.valid||heistProof.id!==a.id)fail('heist-unverified','서버에서 회수와 탈출을 확인하지 못했습니다.',409);reward=heistProof.reward;if(![TIDE.reward,TIDE.reward+10000].includes(reward))fail('heist-unverified','보상을 확인할 수 없습니다.',409);credit(s,reward);}s.heist={active:null,last:{id:a.id,completed:!!cmd.completed,reward,seconds:cmd.completed?heistProof.seconds:null,at:now},best:cmd.completed?Math.min(h.best||Infinity,heistProof.seconds):h.best||null};result={reward,heist:s.heist};break;}
  case 'vehicle.use':{const a=asset(p,cmd.asset);if(a.r.k!==cmd.kind)fail('forged-assets','차종과 서버 소유권이 일치하지 않습니다.',403);result={asset:a.r};break;}
  case 'claim.vehicle':{const K=entry(catalog.vehicles,cmd.kind);if(!K.street||!observation?.car||catalog.fleet?.[observation.kind]!==K.id||now-observation.at>5000)fail('invalid-claim','길거리 차량 탑승을 서버에서 확인하지 못했습니다.',409);const g=garage(p,catalog,cmd.home,'car');if(g.a.length>=g.slots||g.bunker)fail('capacity','차고에 빈 자리가 없습니다.');const h=catalog.homes.find(h=>h.id===cmd.home);if(h&&Math.hypot(observation.x-h.x,observation.z-h.z)>100)fail('invalid-claim','내 차고 앞에서 보관해 주세요.');const r={a:uuid(),k:K.id,p:0,c:paint(cmd.color)};if(K.fuel)r.f=K.fuel.capacity;g.a.push(r);result={asset:r};break;}
