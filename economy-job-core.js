@@ -1,7 +1,7 @@
 export const JOBS = Object.freeze({
- delivery:{name:'배달',min:500,max:1000,cooldown:0,fee:0,rental:'van'},
+ delivery:{name:'배달',min:20000,max:28000,cooldown:0,fee:0,rental:'van'},      // 2026-10-18 : 약 1분 거리 · 쉬지 않으면 $100만까지 약 45분
  freight:{name:'물류창고 트럭 배송',min:40000,max:40000,cooldown:0,fee:0,rental:'boxtruck',fixed:true},
- taxi:{name:'택시',min:1000,max:1200,cooldown:0,fee:0,rental:'taxi'},
+ taxi:{name:'택시',min:30000,max:40000,cooldown:0,fee:0,rental:'taxi'},          // 2026-10-18 : 약 2.5분 거리 · 쉬지 않으면 $100만까지 약 70분
  race:{name:'타임어택',min:50000,max:70000,cooldown:2*60*60*1000,fee:0,rental:'sports'},
  air:{name:'항공 화물 운송',min:300000,max:500000,cooldown:6*60*60*1000,fee:30000,rental:'plane_swift'},
 });

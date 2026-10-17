@@ -33,3 +33,11 @@ export const AIR_JOB_ROUTE=[
  {x:-4100,z:-3980,y:90,label:'활주로 정렬 · 감속/하강',air:true,radius:120},
  {x:-2700,z:-3980,y:0,label:'OPA 활주로 착륙 · 정차 후 F',stop:true,radius:80},
 ];
+
+// 2026-10-18 : 배달 · 택시는 도로 길이로 거리를 맞춘다 (배달 약 1.25 km ≈ 밴으로 1분 · 택시 약 3.6 km ≈ 택시로 2.5분)
+export const JOB_ROUTE_LENGTH=Object.freeze({delivery:1250,taxi:3600});
+export function sizedJobPath(nodes,start,angle,target,valid,minWidth=7){let best=null;
+ for(let k=0;k<6;k++){const a=angle+k*1.05;for(const f of [.72,.56,.88]){const b=nearestJobNode(nodes,start.p[0]+Math.cos(a)*target*f,start.p[1]+Math.sin(a)*target*f,valid);if(!b||b===start)continue;let p;try{p=jobPath(start,b,minWidth);}catch{continue;}
+  const e=Math.abs(pathLength(p)-target)/target;if(!best||e<best.e)best={p,e};if(e<.12)return p;}}
+ if(!best&&minWidth>5)return sizedJobPath(nodes,start,angle,target,valid,5);
+ if(!best)throw Error('연결된 도로 경로를 찾지 못했습니다.');return best.p;}

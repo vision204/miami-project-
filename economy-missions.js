@@ -1,4 +1,4 @@
-import {nearestJobNode,jobPath,pathLength,routeGoals,AIR_JOB_ROUTE} from './economy-job-routes.js';
+import {nearestJobNode,jobPath,pathLength,routeGoals,AIR_JOB_ROUTE,JOB_ROUTE_LENGTH,sizedJobPath} from './economy-job-routes.js';
 import {EconomyError} from './economy-engine.js';
 const graphs=new WeakMap();
 function graph(c){if(graphs.has(c))return graphs.get(c);const nodes=c.roads.map(n=>({p:n.p,y:n.y,g:n.g,edges:[]}));c.roads.forEach((n,i)=>{nodes[i].edges=n.edges.filter(e=>nodes[e.to]).map(e=>({na:nodes[i],nb:nodes[e.to],len:e.len,w:e.w}));});graphs.set(c,nodes);return nodes;}
@@ -12,7 +12,7 @@ export function missionPlan(type,selection,catalog,position,seed=0){
   return {from:from.id,to:to.id,spawn:pickup,face:{x:from.entry[0],z:from.entry[1]},path:line.map(n=>({p:n.p,y:n.y})),length:pathLength(line),goals:[{...pickup,radius:8,stop:true,pickup:true,label:from.name+' · 화물 적재'},{...drop,radius:8,stop:true,dropoff:true,label:to.name+' · 화물 하역'}]};
  }
  const course=Number.isInteger(selection.course)?Math.max(0,Math.min(2,selection.course)):0,anchors=[[-450,-400],[700,1300],[-5400,-2300]],origin=type==='race'?anchors[course]:[position.x,position.z];
- const a=nearestJobNode(nodes,...origin,valid),angle=type==='race'?[.5,2.2,4.1][course]:(seed%62832)/10000,b=nearestJobNode(nodes,a.p[0]+Math.cos(angle)*1800,a.p[1]+Math.sin(angle)*1800,valid);let path=jobPath(a,b,7);
+ const a=nearestJobNode(nodes,...origin,valid),angle=type==='race'?[.5,2.2,4.1][course]:(seed%62832)/10000;let path;if(JOB_ROUTE_LENGTH[type])path=sizedJobPath(nodes,a,angle,JOB_ROUTE_LENGTH[type],valid,7);else{const b=nearestJobNode(nodes,a.p[0]+Math.cos(angle)*1800,a.p[1]+Math.sin(angle)*1800,valid);path=jobPath(a,b,7);}
  if(type==='race')path=path.concat(jobPath(b,a,7).slice(1));return {goals:routeGoals(path,type),path:path.map(n=>({p:n.p,y:n.y})),length:pathLength(path),spawn:at(path[0]),face:at(path[1]||path[0])};
 }
 

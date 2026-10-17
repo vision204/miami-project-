@@ -3,6 +3,7 @@ import {JOBS,jobPayout,cleanJobSave} from './economy-job-core.js';
 import {TIDE,distance} from './heist-layout.js';
 import{RODS,DOCKS,zoneAt,rollFish,fishById,payout}from'./fishing-catalog.js';
 import {GOLF_SETS} from './golf-items.js';
+import{RESPAWN_MS as HUNT_RESPAWN,parseAnimal,speciesById}from'./hunting-catalog.js';
 
 export class EconomyError extends Error {
   constructor(code, message, status=400){super(message);this.code=code;this.status=status;}
@@ -17,6 +18,12 @@ const entry=(a,id)=>list(a).find(x=>String(x.id)===String(id))||fail('unknown-it
 const paint=x=>Number.isInteger(x)&&x>=0&&x<=0xffffff?x:0xffffff;
 const charge=(s,n)=>{if(!money(n))fail('invalid-price','서버 가격을 확인할 수 없습니다.',503);if(s.property.cash<n)fail('insufficient-funds','서버 잔액이 부족합니다.',409);s.property.cash-=n;return n;};
 const credit=(s,n)=>{if(!money(n)||!money(s.property.cash+n))fail('balance-overflow','잔액 한도를 초과합니다.');s.property.cash+=n;};
+// 출석 보상표 (2026-10-18) : 1일차 $100,000 + 로열 볼트(영웅 · 레전더리) 뽑기권 2장 · 2~7일차 $20,000~$70,000 · 7일 연속 출석하면 7일차 $770,000
+// 스킨 = 총 1개 (2026-10-18) : 스킨 1장은 총 1자루에만 영구히 입힌다 · 중복은 장수(stock)로 쌓이고 1장씩 팔 수 있다 (등급별 소액)
+export const SKIN_SELL=Object.freeze([200,400,750,2000,7500]);
+// v2 로 바꿀 때 : 지금 끼운 것(eq)은 그대로 인정(고정) · 어디에도 안 끼운 가진 스킨은 1장씩
+export function skinsV2(p){p.gunmods??={};const sk=p.gunmods.__skins??={inv:[],eq:{},pity:0};sk.eq??={};if(sk.v!==2){const used=new Set(Object.values(sk.eq));sk.stock={};for(const id of list(sk.inv))if(!used.has(id))sk.stock[id]=1;sk.v=2;}sk.stock??={};return sk;}
+export const ATTENDANCE=Object.freeze([{cash:100000,tickets:{royal:2}},{cash:20000},{cash:30000},{cash:40000},{cash:50000},{cash:60000},{cash:70000,streak:770000}]);
 export const saleRefund=paid=>Math.floor(paid/5)*2+Math.floor((paid%5)*2/5);
 
 // All physical assets carry a server-generated identity independent of model/paint.
@@ -81,6 +88,29 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
   const range=Math.hypot(target[0]-o.x,target[1]-o.z),zone=zoneAt(...target);if(!zone||range<3||range>rod.range+1)fail('fishing-water','낚싯대 사거리 안의 수면을 선택하세요.',409);
   const caught=rollFish(zone,roll);s.fishing={...(s.fishing||{}),active:{id:cmd.run,rod:rod.id,zone,target,origin:{x:o.x,y:o.y,z:o.z},startedAt:now,biteAt:now+6000+roll(6000),expiresAt:now+125000,catch:caught}};result={active:s.fishing.active};break;
  }
+ case 'attendance.claim':{   // 출석 보상 (2026-10-18) : 한국 시간 날짜 · 7일 주기 · 7일 연속이면 7일차 $770,000
+  const day=t=>new Date(t+9*3600000).toISOString().slice(0,10),today=day(now),yesterday=day(now-86400000);
+  const a=s.attendance&&typeof s.attendance==='object'?s.attendance:{day:0,last:null,chain:false,total:0,cycles:0};
+  if(a.last===today)fail('attendance-done','오늘은 이미 출석 보상을 받았어요.',409);
+  const n=(a.day|0)>=1&&(a.day|0)<7?(a.day|0)+1:1,chain=n===1?true:!!a.chain&&a.last===yesterday;
+  const R=ATTENDANCE[n-1],reward=n===7&&chain?R.streak:R.cash;credit(s,reward);
+  if(R.tickets){p.gunmods??={};const sk=p.gunmods.__skins??={inv:[],eq:{},pity:0};sk.tickets??={};for(const [id,k] of Object.entries(R.tickets))sk.tickets[id]=(sk.tickets[id]|0)+k;}
+  s.attendance={day:n,last:today,chain,total:(money(a.total)?a.total:0)+reward,cycles:(a.cycles|0)+(n===7?1:0),at:now};
+  result={day:n,reward,tickets:R.tickets||null,chain,streakBonus:n===7&&chain,attendance:s.attendance};break;}
+ case 'hunt.claim':{   // SUNHORN 사냥 (2026-10-17) : 서버가 무리 표 · 위치 · 재등장 시간 · 보상을 다시 계산한다
+  const a=parseAnimal(cmd.animal),at=cmd.at;if(!a)fail('invalid-hunt','사냥감을 확인할 수 없어요.');
+  if(!Array.isArray(at)||at.length!==2||!at.every(Number.isFinite))fail('invalid-hunt','사냥감 위치를 확인할 수 없어요.');
+  const o=observation;if(!o||now-o.at>3000||o.car||!(o.hp>0))fail('hunt-location','차에서 내려 쓰러진 동물 옆에서 수확하세요.',409);
+  if(Math.hypot(at[0]-o.x,at[1]-o.z)>9)fail('hunt-location','쓰러진 동물 가까이에서 수확하세요.',409);
+  if(a.herd!==null&&Math.hypot(at[0]-a.x,at[1]-a.z)>a.r*2.4+300)fail('hunt-unverified','이 동물을 확인하지 못했어요.',409);
+  const h=s.hunting=s.hunting&&typeof s.hunting==='object'?s.hunting:{records:{},claims:{},recent:[],total:0};h.records??={};h.claims??={};h.recent=list(h.recent).filter(t=>Number.isFinite(t)&&now-t<600000);h.total=money(h.total)?h.total:0;
+  for(const [k,t] of Object.entries(h.claims))if(!Number.isFinite(t)||now-t>HUNT_RESPAWN)delete h.claims[k];
+  if(h.claims[a.id]&&now-h.claims[a.id]<HUNT_RESPAWN-20000)fail('hunt-claimed','이미 수확한 동물이에요. 다시 나타나면 사냥할 수 있어요.',409);
+  if(h.recent.length&&now-h.recent[h.recent.length-1]<1500)fail('rate-limit','수확이 너무 빨라요. 잠시 뒤 다시 해 주세요.',429);
+  if(h.recent.length>=40)fail('hunt-limit','10분 동안 너무 많이 수확했어요. 잠시 쉬었다가 사냥해 주세요.',429);
+  const reward=a.price;credit(s,reward);h.claims[a.id]=now;h.recent.push(now);h.total+=reward;
+  const r=h.records[a.species]&&typeof h.records[a.species]==='object'?h.records[a.species]:{count:0,best:0,total:0};r.count=(r.count|0)+1;r.best=Math.max(r.best|0,reward);r.total=(money(r.total)?r.total:0)+reward;h.records[a.species]=r;
+  result={reward,species:a.species,name:speciesById(a.species).name,animal:a.id};break;}
  case 'fishing.settle':{
   const f=s.fishing||{},a=f.active;if(!a||a.id!==cmd.run){if(f.last?.id===cmd.run){result={reward:0,already:true,catch:f.last.catch};break;}fail('invalid-fishing','진행 중인 낚시가 아닙니다.',409);}
   let caught=null,reward=0;if(cmd.completed===true){if(!fishingProof?.valid||fishingProof.id!==a.id||JSON.stringify(fishingProof.catch)!==JSON.stringify(a.catch))fail('fishing-unverified','서버에서 포획을 확인하지 못했습니다.',409);caught=a.catch;const fish=fishById(caught.fish);reward=payout(fish,caught.grams);credit(s,reward);f.records??={};const r=f.records[fish.id]||{count:0,grams:0,length:0};f.records[fish.id]={count:r.count+1,grams:Math.max(r.grams,caught.grams),length:Math.max(r.length,caught.length)};f.total=(f.total||0)+1;f.earnings=(f.earnings||0)+reward;}
@@ -124,7 +154,14 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
  case 'buy.interior':{if(!owns(p.pent?.owned,cmd.floor))fail('not-owner','내 층이 아닙니다.',403);if(!Array.isArray(cmd.selection)||cmd.selection.length!==6)fail('invalid-interior','인테리어 선택을 확인해 주세요.');p.pent.rooms??={};const r=p.pent.rooms[cmd.floor]??={sel:[0,0,0,0,0,0],own:['','','','','','']};cmd.selection.forEach((i,k)=>{if(!Number.isInteger(i)||!catalog.pentSets[i])fail('invalid-interior','없는 인테리어입니다.');const have=String(r.own[k]||'').split(',').filter(Boolean).map(Number);if(i&&!have.includes(i)){spent+=catalog.pentItemPrices[k][i];have.push(i);r.own[k]=have.join(',');}});if(cmd.selection[0]&&cmd.selection.every(i=>i===cmd.selection[0]))spent=Math.round(spent*.8/10000)*10000;charge(s,spent);r.sel=[...cmd.selection];break;}
  case 'buy.tuning':{const a=asset(p,cmd.asset),t=tuneClean(cmd.tuning),c=paint(cmd.color);delete t.ee;if(a.r.t?.ee)t.ee=a.r.t.ee;spent=charge(s,tuningCost({t:a.r.t,c:a.r.c},{t,c},catalog.tune));a.r.t=t;a.r.c=c;result={asset:a.r};break;}
  case 'tune.enhance':{const a=asset(p,cmd.asset),t=tuneClean(a.r.t||{}),E=catalog.tune?.ee;if(!E)fail('invalid-command','강화를 쓸 수 없습니다.');if((t.e||0)<3)fail('enhance-locked','엔진 3단계부터 강화할 수 있어요.');const lv=t.ee||0;if(lv>=E.rate.length)fail('enhance-max','이미 최고 단계예요.');spent=charge(s,E.cost[lv]);const ok=roll(10000)<Math.round(E.rate[lv]*100);if(ok)t.ee=lv+1;a.r.t=t;result={asset:a.r,success:ok,level:t.ee||0};break;}
- case 'buy.skinbox':{const B=entry(catalog.boxes,cmd.id);spent=charge(s,B.price);p.gunmods??={};const sk=p.gunmods.__skins??={inv:[],eq:{},pity:0};if(B.pity)sk.pity=(sk.pity||0)+1;let n=roll(1000000)/1000000,t=0;for(;t<4&&n>=B.odds[t];t++)n-=B.odds[t];let pool=catalog.skins.filter(k=>k.t===t),pity=false;if(B.pity&&sk.pity>=catalog.pity&&t!==4){pool=catalog.skins.filter(k=>k.t===4);const fresh=pool.filter(k=>!owns(sk.inv,k.id));if(fresh.length)pool=fresh;pity=true;}const win=pool[roll(pool.length)];if(win.t===4&&B.pity)sk.pity=0;const dup=owns(sk.inv,win.id),back=dup?B.refund[win.t]:0;if(dup)credit(s,back);else add(sk,'inv',win.id);result={skin:{id:win.id,dup,back,pity,box:B.id}};break;}
+ case 'buy.skinbox':{const B=entry(catalog.boxes,cmd.id);const sk=skinsV2(p);if(cmd.ticket===true){sk.tickets??={};const n=sk.tickets[B.id]|0;if(n<1)fail('no-ticket','뽑기권이 없어요.',409);sk.tickets[B.id]=n-1;}else spent=charge(s,B.price);if(B.pity)sk.pity=(sk.pity||0)+1;let n=roll(1000000)/1000000,t=0;for(;t<4&&n>=B.odds[t];t++)n-=B.odds[t];let pool=catalog.skins.filter(k=>k.t===t),pity=false;if(B.pity&&sk.pity>=catalog.pity&&t!==4){pool=catalog.skins.filter(k=>k.t===4);const fresh=pool.filter(k=>!owns(sk.inv,k.id));if(fresh.length)pool=fresh;pity=true;}const win=pool[roll(pool.length)];if(win.t===4&&B.pity)sk.pity=0;const dup=owns(sk.inv,win.id),back=0;add(sk,'inv',win.id);sk.stock[win.id]=(sk.stock[win.id]|0)+1;result={skin:{id:win.id,dup,back,pity,box:B.id,count:sk.stock[win.id]}};break;}
+ case 'skin.apply':{   // 스킨 입히기 (영구 · 되돌릴 수 없음)
+  const sk=skinsV2(p),w=cmd.weapon,id=cmd.skin;if(typeof w!=='string'||w==='fists'||!owns(p.guns,w))fail('not-owner','가진 총에만 스킨을 입힐 수 있어요.',403);
+  if(!catalog.skins.some(k=>k.id===id))fail('invalid-skin','없는 스킨이에요.');if(sk.eq[w])fail('skin-locked','이 총은 이미 스킨이 입혀져 있어서 바꿀 수 없어요.',409);
+  if((sk.stock[id]|0)<1)fail('no-skin','남은 스킨이 없어요.',409);sk.stock[id]--;if(!sk.stock[id])delete sk.stock[id];sk.eq[w]=id;result={weapon:w,skin:id};break;}
+ case 'skin.sell':{   // 남은 스킨 1장 팔기 (입힌 스킨은 못 팖)
+  const sk=skinsV2(p),id=cmd.id,S=catalog.skins.find(k=>k.id===id);if(!S)fail('invalid-skin','없는 스킨이에요.');if((sk.stock[id]|0)<1)fail('no-skin','팔 수 있는 스킨이 없어요.',409);
+  sk.stock[id]--;if(!sk.stock[id])delete sk.stock[id];if(!sk.stock[id]&&!Object.values(sk.eq).includes(id))sk.inv=list(sk.inv).filter(x=>x!==id);const reward=SKIN_SELL[S.t]|0;credit(s,reward);result={id,reward,count:sk.stock[id]|0};break;}
  case 'buy.food':{const menu=entry(catalog.menus,cmd.shop).menu,q=menu[cmd.index];if(!q)fail('unknown-item','없는 메뉴입니다.');spent=charge(s,q[1]);result={heal:q[2]||0};break;}
  case 'buy.heal':spent=charge(s,catalog.healPrice);break;
  case 'buy.rental':spent=charge(s,entry(catalog.rentals,cmd.id).fee);break;
@@ -153,7 +190,7 @@ export function applyProgress(account,proposal,catalog,now=Date.now()){
  if(owns(p.pent?.owned,v.pent?.spawn))p.pent.spawn=v.pent.spawn;
  if(Number.isFinite(v.armor))p.armor=Math.min(p.armor||0,Math.max(0,v.armor));
  for(const [wid,r]of Object.entries(v.gunmods||{})){if(wid==='__skins')continue;const own=p.gunmods?.[wid];if(!own)continue;const e=list(r.e);if(e.length!==catalog.partSlots.length)continue;if(e.every((i,k)=>i===0||owns(own.o,catalog.partSlots[k]+':'+catalog.parts[catalog.partSlots[k]]?.[i]?.id)))own.e=e;}
- const sk=p.gunmods?.__skins;if(sk)for(const [wid,id]of Object.entries(v.gunmods?.__skins?.eq||{}))if(owns(p.guns,wid)&&owns(sk.inv,id))sk.eq[wid]=id;
+ const sk=p.gunmods?.__skins;if(sk&&sk.v!==2){sk.eq??={};for(const [wid,id]of Object.entries(v.gunmods?.__skins?.eq||{}))if(owns(p.guns,wid)&&owns(sk.inv,id))sk.eq[wid]=id;skinsV2(p);}   // v2 부터 입히기는 서버 명령 skin.apply 로만
  for(const [floor,r]of Object.entries(v.pent?.rooms||{})){const own=p.pent?.rooms?.[floor];if(own&&list(r.sel).length===6&&r.sel.every((i,k)=>i===0||String(own.own[k]).split(',').includes(String(i))))own.sel=r.sel;}
  s.version++;s.updatedAt=now;
  const save={property:p};for(const k of ['x','y','z','yaw'])if(Number.isFinite(proposal?.[k])&&Math.abs(proposal[k])<=100000)save[k]=proposal[k];
