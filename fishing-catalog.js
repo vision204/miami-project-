@@ -24,29 +24,29 @@ const rows=[
  ['yellow_bream','황돔','beach',.25,3.2,190,18,0xd7ba59,'deep'],
  ['gizzard_shad','전어','beach',.08,.5,130,30,0xa6b6c9,'deep'],
  ['filefish','쥐치','beach',.12,1.5,210,16,0xa7aa78,'deep'],
- ['flounder','넙치','beach',.4,6,175,12,0x8c896a,'flat'],
+ ['flounder','넙치','beach',.4,6,260,12,0x8c896a,'flat'],
  ['rockfish','우럭','rock',.25,3.5,180,30,0x756f64,'deep'],
  ['black_rockfish','볼락','rock',.08,.8,220,28,0x8c735d,'deep'],
  ['scorpionfish','쏨뱅이','rock',.1,1.4,240,22,0xb8785b,'spiny'],
- ['grouper','능성어','rock',.7,10,260,8,0x83966f,'deep'],
+ ['grouper','능성어','rock',.7,10,360,8,0x83966f,'deep'],
  ['striped_bream','돌돔','rock',.4,5,320,12,0xb2bec1,'striped'],
- ['tuna','참치','ocean',5,45,165,14,0x416b9a,'torpedo'],
- ['swordfish','황새치','ocean',8,60,230,5,0x688ba9,'sword'],
+ ['tuna','참치','ocean',5,45,260,14,0x416b9a,'torpedo'],
+ ['swordfish','황새치','ocean',8,60,350,5,0x688ba9,'sword'],
  ['mahi','만새기','ocean',2,15,180,30,0x78c478,'torpedo'],
  ['yellowtail','방어','ocean',1.5,12,150,32,0x769fa3,'torpedo'],
- ['king_mackerel','꼬치삼치','ocean',2,20,190,19,0x7c9bac,'needle'],
+ ['king_mackerel','꼬치삼치','ocean',2,20,210,19,0x7c9bac,'needle'],
  ['bass','큰입배스','lagoon',.2,5,100,30,0x719367,'deep'],
- ['bluegill','블루길','lagoon',.04,.65,145,32,0x779d9f,'deep'],
- ['carp','잉어','lagoon',.4,8,90,17,0xb6a471,'deep'],
+ ['bluegill','블루길','lagoon',.04,.65,80,32,0x779d9f,'deep'],
+ ['carp','잉어','lagoon',.4,8,150,17,0xb6a471,'deep'],
  ['crucian','붕어','lagoon',.08,1.8,110,25,0xc1b584,'deep'],
- ['catfish','채널메기','lagoon',.4,10,125,10,0x849399,'catfish'],
+ ['catfish','채널메기','lagoon',.4,10,190,10,0x849399,'catfish'],
  ['snakehead','가물치','cypress',.4,7,150,30,0x73805d,'slim'],
- ['peacock_bass','피콕배스','cypress',.25,4.5,190,20,0xadbd55,'striped'],
+ ['peacock_bass','피콕배스','cypress',.25,4.5,190,10,0xadbd55,'striped'],
  ['tilapia','틸라피아','cypress',.15,2.5,105,50,0x8b9d91,'deep'],
- ['longnose_gar','롱노즈가','creek',.6,12,210,30,0x9a9e70,'needle'],
+ ['longnose_gar','롱노즈가','creek',.6,12,210,12,0x9a9e70,'needle'],
  ['bowfin','보우핀','creek',.4,6,180,70,0x68866b,'slim']
 ];
-export const FISH=Object.freeze(rows.map(([id,name,zone,min,max,price,chance,color,shape],i)=>Object.freeze({id,name,zone,min,max,price,chance,color,shape,index:i})));
+export const FISH=Object.freeze(rows.map(([id,name,zone,min,max,price,chance,color,shape],i)=>Object.freeze({id,name,zone,min,max,price,chance,color,shape,index:i,rarity:chance<=12?'희귀':chance<=22?'고급':'일반'})));
 export const fishById=id=>FISH.find(f=>f.id===id);
 export function zoneAt(x,z){
  if(!Number.isFinite(x)||!Number.isFinite(z)||x<W.minX+20||x>W.maxX-20||z<W.minZ+20||z>W.maxZ-20||landSDF(x,z)>-2)return null;

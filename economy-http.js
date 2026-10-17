@@ -25,7 +25,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   if(!req.url?.split('?')[0].startsWith('/economy/'))return false;
   const origin=req.headers.origin;if(origin){if(!allowed.includes(origin)){send(res,403,{ok:false,code:'origin-denied'});return true;}res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
   if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','POST, GET, OPTIONS');res.writeHead(204);res.end();return true;}
-  if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,golfSets:1,fishing:1,enabled:enabled||!!testStore,configured,available,configuration:error});return true;}
+  if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,golfSets:1,fishing:1,fishingCatalog:2,enabled:enabled||!!testStore,configured,available,configuration:error});return true;}
   if(req.url!=='/economy/transaction'||req.method!=='POST'){send(res,404,{ok:false,code:'not-found'});return true;}
   if(!available){send(res,503,{ok:false,code:'economy-unavailable',message:'서버 거래 연결을 준비 중입니다.'});return true;}
   try{
@@ -41,5 +41,5 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   }catch(e){const known=e instanceof EconomyError;send(res,known?e.status:503,{ok:false,code:known?e.code:'storage-unavailable',message:known?e.message:'서버 저장을 완료하지 못했습니다. 같은 거래로 다시 시도해 주세요.'});}
   return true;
  }
- return {fishingTick:()=>store?.fishing?.tick(),fishingState:uid=>available?store.fishing?.snapshot(uid):null,fishingAction:(uid,m)=>available?store.fishing?.action(uid,m):null,heistProtected:uid=>{const r=store?.heists?.get(uid);return !!r&&!['done','failed'].includes(r.phase);},heistTick:()=>store?.heists?.tick(),heistState:uid=>available?store.heists?.snapshot(uid):null,heistAction:(uid,m)=>available?store.heists?.action(uid,m):null,handle,status:()=>({protocol:1,enabled:enabled||!!testStore,configured,available,configuration:error}),balance,observe:(uid,s)=>{if(available&&uid){store.missions?.observe(uid,s);store.heists?.observe(uid,s);store.fishing?.observe(uid,s);}}};
+ return {fishingTick:()=>store?.fishing?.tick(),fishingState:uid=>available?store.fishing?.snapshot(uid):null,fishingAction:(uid,m)=>available?store.fishing?.action(uid,m):null,heistProtected:uid=>{const r=store?.heists?.get(uid);return !!r&&!['done','failed'].includes(r.phase);},heistTick:()=>store?.heists?.tick(),heistState:uid=>available?store.heists?.snapshot(uid):null,heistAction:(uid,m)=>available?store.heists?.action(uid,m):null,handle,status:()=>({protocol:1,golfSets:1,fishing:1,fishingCatalog:2,enabled:enabled||!!testStore,configured,available,configuration:error}),balance,observe:(uid,s)=>{if(available&&uid){store.missions?.observe(uid,s);store.heists?.observe(uid,s);store.fishing?.observe(uid,s);}}};
 }
