@@ -28,7 +28,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'fishing-1';                      // 2026-10-08 : 차 튜닝 중계 'ctune' (older: basketball-pads-1)
+const BUILD = 'pedsync-1';                     // 2026-10-19 : NPC 사망 공유 'ped' (older: fishing-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -241,6 +241,21 @@ wss.on('connection', (ws, req) => {
         const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<22000)?m.target:null;
         broadcast(room,{t:'warfx',from:peer.id,phase:'launch',id:m.id,kind:m.kind,o:m.o,d:m.d.map(v=>v/len),target},peer.id);
       } else if(m.phase==='impact') broadcast(room,{t:'warfx',from:peer.id,phase:'impact',id:m.id,o:m.o},peer.id);
+    } else if (m.t === 'ped'){
+      /* NPC 사망 공유 (2026-10-19) : 화면 연출만 전달한다. 돈·처치 수는 죽인 사람 브라우저에서 이미 끝났고,
+         받는 쪽은 같은 번호(결정론적 슬롯)의 NPC 를 쓰러뜨리기만 한다. 가까운 사람에게만 보낸다. */
+      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
+      if (!peer.ready || (peer.s[7] & 128) || !Array.isArray(m.k) || !m.k.length) return;
+      if (now-(peer.pedWindow||0)>1000){peer.pedWindow=now;peer.pedCount=0;}
+      const out=[];
+      for (const a of m.k.slice(0,16)){
+        if(!Array.isArray(a)||a.length<4||!a.slice(0,4).every(Number.isFinite))continue;
+        if(!Number.isInteger(a[0])||a[0]<0||a[0]>4294967295)continue;
+        if(Math.hypot(a[1]-peer.s[0],a[3]-peer.s[2])>700)continue;   // 죽인 사람 근처의 NPC 만
+        if((peer.pedCount=(peer.pedCount||0)+1)>24)break;            // 1초에 24명까지
+        out.push([a[0],Math.round(a[1]*100)/100,Math.round(num(a[2],-500,5000)*100)/100,Math.round(a[3]*100)/100,num(a[4],-5,5),num(a[5],-5,5)]);
+      }
+      if(out.length)broadcastNear(room,peer,{t:'ped',from:peer.id,k:out});
     } else if (m.t === 'sp'){
       /* 골프 · 농구 슛 대결 (sp-1) : 가벼운 전달만 한다. 판정은 각자 브라우저가 한다.
          보낸 사람 번호(id)는 서버가 붙이고, 값은 숫자 12개까지만 다시 만들어 보낸다. */
