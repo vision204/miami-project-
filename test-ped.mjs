@@ -20,6 +20,6 @@ try{
   assert.equal(B.ped.reduce((n,m)=>n+m.k.length,0),24,'rate limited to 24/s');
   // 집 안(비공개 128) 이면 무시
   B.ped.length=0;await wait(1100);st(A,0,0,128);await wait(100);A.ws.send(JSON.stringify({t:'ped',k:[[7,1,0,1,0,0]]}));await wait(300);assert.equal(B.ped.length,0,'private flag ignored');
-  const stats=await (await fetch('http://127.0.0.1:'+PORT+'/stats')).json();assert.equal(stats.build,'pedsync-1','build tag');
+  const stats=await (await fetch('http://127.0.0.1:'+PORT+'/stats')).json();assert.equal(stats.build,'atelier-20261022-1','build tag');
   console.log('PED relay test passed');for(const c of [A,B,Far])c.ws.close();
 }finally{srv.kill();}

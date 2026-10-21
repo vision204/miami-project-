@@ -4,6 +4,7 @@ import {TIDE,distance} from './heist-layout.js';
 import{RODS,DOCKS,zoneAt,rollFish,fishById,payout}from'./fishing-catalog.js';
 import {GOLF_SETS} from './golf-items.js';
 import{RESPAWN_MS as HUNT_RESPAWN,parseAnimal,speciesById}from'./hunting-catalog.js';
+import {AIRPORTS_LAYOUT,airportTerminal,airportDestination} from './airport-layout.js';
 
 export class EconomyError extends Error {
   constructor(code, message, status=400){super(message);this.code=code;this.status=status;}
@@ -73,9 +74,23 @@ export function tuningCost(o,n,P){let v=0;const a=o.t||{},b=n.t||{};if(n.c!==o.c
 // The server accepts intents, never client totals, cash, ownership lists or paid prices.
 export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
  if(!account||account.schema!==1)fail('invalid-account','계정 원장을 불러올 수 없습니다.',503);
- const s=copy(account),p=s.property;let spent=0,result={};
+ const s=copy(account),p=s.property;let spent=0,result={},flightSave=null;
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
  switch(cmd.type){
+ case 'flight.board':{
+  const t=airportTerminal(cmd.from),to=airportDestination(cmd.from),o=observation;
+  if(!t||!to||typeof cmd.pass!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.pass))fail('flight-route','항공편을 확인해 주세요.');
+  if(s.flight?.id===cmd.pass||s.flight?.pending)fail('flight-pending','이전 항공편 도착을 먼저 확인해 주세요.',409);
+  if(!o||now-o.at>2500||!Number.isFinite(o.speed)||o.hp<=0||o.car||(o.flags&18)||Math.abs(o.speed)>1.5||Math.hypot(o.x-t.ticket.x,o.z-t.ticket.z)>8||Math.abs(o.y-t.y)>4)fail('flight-location','차에서 내려 공항 매표소 앞에서 구매해 주세요.',409);
+  if(s.heist?.active||s.work?.active?.expiresAt>now||s.fishing?.active?.expiresAt>now)fail('flight-busy','진행 중인 습격·작업·낚시를 먼저 종료하세요.',409);
+  spent=charge(s,AIRPORTS_LAYOUT.fare);s.flight={id:cmd.pass,from:t.id,to:to.id,arrival:{...to.arrival},pending:true,at:now};result={flight:s.flight};flightSave={...to.arrival,property:p};break;
+ }
+ case 'flight.arrive':{
+  const f=s.flight,o=observation;if(!f||f.id!==cmd.pass)fail('flight-missing','구매한 탑승권을 찾을 수 없어요.',409);
+  if(!f.pending){result={flight:f};break;}
+  if(!o||now-o.at>2500||o.car||!(o.hp>0)||Math.hypot(o.x-f.arrival.x,o.z-f.arrival.z)>22||Math.abs(o.y-f.arrival.y)>5)fail('flight-arrival','도착 공항에서 연결을 다시 확인해 주세요.',409);
+  f.pending=false;f.arrivedAt=now;result={flight:f};flightSave={...f.arrival,property:p};break;
+ }
  case 'buy.rod':{const q=entry(RODS,cmd.id);if(!observation||now-observation.at>2000||!DOCKS.some(d=>Math.hypot(d.x-observation.x,d.z-observation.z)<5.5&&Math.abs(d.y-observation.y)<3)||observation.car)fail('fishing-shop-location','부두 낚시 상인 앞에서 구매해 주세요.',409);p.fishing??={owned:[],equipped:null};if(owns(p.fishing.owned,q.id))fail('already-owned','이미 가진 낚싯대입니다.',409);spent=charge(s,q.price);add(p.fishing,'owned',q.id);p.fishing.equipped=q.id;break;}
  case 'equip.rod':{entry(RODS,cmd.id);if(!owns(p.fishing?.owned,cmd.id))fail('not-owner','구매한 낚싯대만 장착할 수 있어요.',403);p.fishing.equipped=cmd.id;break;}
  case 'fishing.start':{
@@ -127,6 +142,8 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
  case 'job.start':{if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-job','업무 식별자가 필요합니다.');const d=JOBS[cmd.job];if(!d||!plan?.goals?.length)fail('invalid-job','일거리 경로를 확인할 수 없습니다.');const w={...cleanJobSave(s.work),active:s.work?.active||null};if(w.active&&w.active.expiresAt>now)fail('job-active','진행 중인 일거리가 있습니다.',409);if((w.next[cmd.job]||0)>now)fail('job-cooldown','재도전 대기시간이 남았습니다.',409);let owned=false,vehicleKind=d.rental;if(cmd.asset){const a=asset(p,cmd.asset),K=entry(catalog.vehicles,a.r.k);if(!K.jobs?.includes(cmd.job)||!observation?.car||catalog.fleet?.[observation.kind]!==K.id)fail('invalid-job-vehicle','업무에 맞는 개인 장비가 아닙니다.');owned=true;vehicleKind=K.id;}const fee=owned?0:d.fee;spent=charge(s,fee);if(d.cooldown)w.next[cmd.job]=now+d.cooldown;w.active={id:cmd.run,type:cmd.job,owned,fee,startedAt:now,expiresAt:now+3600000,vehicleKind,plan};s.work=w;result={ledger:w,cash:p.cash,plan};break;}
  case 'job.settle':{const w=s.work||{},a=w.active;if(!a||a.id!==cmd.run){if(w.last?.id===cmd.run){result={ledger:w,reward:0,cash:p.cash,already:true};break;}fail('invalid-job','진행 중인 일거리가 아닙니다.',409);}let reward=0;if(cmd.completed){if(!proof||proof.invalid||!proof.finishedAt||proof.id!==a.id||a.expiresAt<now)fail('job-unverified','서버에서 경유지 통과를 확인하지 못했습니다.',409);const elapsed=(proof.finishedAt-(proof.raceAt||a.startedAt))/1000,min=a.plan.length/(a.type==='air'?300:130);if((proof.finishedAt-a.startedAt)/1000<min)fail('job-too-fast','운행 시간을 확인할 수 없습니다.',409);const gold=a.type==='race'?Math.max(110,a.plan.length/20):a.type==='air'?Math.max(600,a.plan.length/45):Math.max(300,a.plan.length/10);const punctual=Math.max(0,Math.min(1,1-(elapsed-gold)/(gold*.5))),quality=a.type==='race'?(elapsed<=gold?1:elapsed<=gold*1.5?.5:0):.5+.5*punctual;reward=jobPayout(a.type,quality,a.owned).total;credit(s,reward);}const next={...cleanJobSave(w),active:null};next.runs++;next.earned+=reward;next.last={id:a.id,type:a.type,completed:!!cmd.completed,total:reward,at:now};s.work=next;result={ledger:next,reward,cash:p.cash};break;}
  case 'buy.vehicle': {
+  if(cmd.kind==='sv_sovrano')fail('founders-only','판매 중지 · 최초 가입자 200명 전용 차량입니다.',409);
+  if(cmd.kind==='tz_lanza')fail('limited-package-only','SVR 67은 리미티드 패키지 전용 차량입니다. 현재 판매 준비 중입니다.',409);
   const K=entry(catalog.vehicles,cmd.kind),type=K.type;if(K.sale===false)fail('not-for-sale','상점에서 판매하지 않는 차량입니다.');if(K.id==='war_drone')fail('invalid-command','드론 라이선스 구매를 이용해 주세요.');
   if(type==='boat'){p.boats??={seq:0,boats:[]};if(list(p.boats.boats).length>=200)fail('capacity','보유 한도입니다.');}
   let target;if(type==='car'||type==='plane')target=garage(p,catalog,cmd.home,type);
@@ -168,7 +185,7 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
  case 'buy.fuel':{const a=asset(p,cmd.asset),K=entry(catalog.vehicles,a.r.k);if(!K.fuel)fail('unknown-item','주유할 수 없는 차량입니다.');const have=Number.isFinite(a.r.f)?a.r.f:K.fuel.capacity,amount=cmd.amount==='full'?K.fuel.capacity:cmd.amount;if(!Number.isFinite(amount)||amount<0)fail('invalid-fuel','주유량을 확인해 주세요.');const liters=Math.min(K.fuel.capacity-have,amount);spent=charge(s,Math.round(liters*20));a.r.f=have+liters;result={liters,cost:spent,capacity:K.fuel.capacity};break;}
  default:fail('unsupported-command','서버에서 지원하지 않는 거래입니다.');
  }
- s.version++;s.updatedAt=now;return {account:s,result:{...result,spent}};
+ s.version++;s.updatedAt=now;return {account:s,result:{...result,spent},...(flightSave?{save:flightSave}:{})};
 }
 
 // Saves may move existing assets between owned garages and consume fuel/armor;
@@ -194,6 +211,8 @@ export function applyProgress(account,proposal,catalog,now=Date.now()){
  for(const [floor,r]of Object.entries(v.pent?.rooms||{})){const own=p.pent?.rooms?.[floor];if(own&&list(r.sel).length===6&&r.sel.every((i,k)=>i===0||String(own.own[k]).split(',').includes(String(i))))own.sel=r.sel;}
  s.version++;s.updatedAt=now;
  const save={property:p};for(const k of ['x','y','z','yaw'])if(Number.isFinite(proposal?.[k])&&Math.abs(proposal[k])<=100000)save[k]=proposal[k];
+ // A delayed departure autosave must never undo an already paid flight on reload.
+ if(s.flight?.pending)Object.assign(save,s.flight.arrival);
  if(typeof proposal?.tod==='string')save.tod=proposal.tod.slice(0,20);
  // Ammo/health/physics remain outside this economy boundary, but weapon ownership is authoritative.
  return {account:s,save};

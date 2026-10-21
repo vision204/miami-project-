@@ -1,3 +1,4 @@
+import {awardFounder,FOUNDERS_PATH} from './founders.js';
 import {createHash} from 'node:crypto';
 import {applyCommand,applyProgress,migrateAccount,EconomyError} from './economy-engine.js';
 import {MissionMonitor} from './economy-missions.js';
@@ -29,11 +30,14 @@ export class EconomyStore {
    }
   }
   const output=await this.db.runTransaction(async tx=>{
-   const [control,ledger,done,legacy]=await Promise.all([tx.get(controlRef),tx.get(ref),tx.get(receipt),tx.get(legacyRef)]);
+   const [control,ledger,done,legacy,founders]=await Promise.all([tx.get(controlRef),tx.get(ref),tx.get(receipt),tx.get(legacyRef),tx.get(this.db.doc(FOUNDERS_PATH))]);
    if(control.data()?.lockedVersion!==1)throw new EconomyError('cutover-required','서버 거래 전환을 준비 중입니다.',503);
    let account=ledger.exists?ledger.data():migrateAccount(legacy.exists?legacy.data():null,this.catalog);
    if(done.exists){if(done.data().hash!==hash)throw new EconomyError('idempotency-conflict','이미 사용한 거래 식별자입니다.',409);return {account,result:done.data().result||{},replayed:true};}
    if(request.type==='load'){
+    const granted=awardFounder(account,uid,founders.data(),this.catalog);
+    if(granted&&ledger.exists)tx.set(ref,account);
+    if(granted)tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});
     if(!ledger.exists){tx.create(this.db.doc('economyMigrations/'+uid),{at:Date.now(),source:legacy.exists?legacy.data():null});tx.create(ref,account);}
     return {account,result:{},replayed:false};
    }
