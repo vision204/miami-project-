@@ -1,3 +1,5 @@
+import {CombatSecurity} from './combat-security.js';
+import {ConnectionLimits} from './connection-limits.js';
 import {Bombing} from './bombing.js';
 import fs from 'node:fs';
 /* =====================================================================
@@ -30,7 +32,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'bombing-fx-20261022-2';                     // 2026-10-19 : NPC 사망 공유 'ped' (older: fishing-1)
+const BUILD = 'security-20261022-1';                     // 2026-10-19 : NPC 사망 공유 'ped' (older: fishing-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -58,16 +60,17 @@ const FB_PROJECT = process.env.FIREBASE_PROJECT_ID || 'smm2-505da';
 const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
 async function verifyUid(token){
   /* 로컬 시험 전용 : MIAMI_TEST_AUTH=1 일 때만 'test:<uid>' 를 받는다. Render 에는 이 변수를 넣지 마세요. */
-  if (process.env.MIAMI_TEST_AUTH === '1' && String(token).startsWith('test:')) { const u = String(token).slice(5); return validUid(u) ? u : null; }
+  if (process.env.MIAMI_TEST_AUTH === '1' && String(token).startsWith('test:')) { const u = String(token).slice(5); return validUid(u) ? {uid:u,expiresAt:Date.now()+300000} : null; }
   const { payload } = await jwtVerify(String(token || ''), JWKS, { issuer: 'https://securetoken.google.com/' + FB_PROJECT, audience: FB_PROJECT });
-  return validUid(payload.sub) ? payload.sub : null;
+  return validUid(payload.sub) ? {uid:payload.sub,expiresAt:payload.exp*1000} : null;
 }
 const friends = new Friends();
 
 /* ---------------------------------------------------------------------
    상태
    --------------------------------------------------------------------- */
-const rooms = new Map();   // roomId -> Map(id -> peer)
+const rooms = new Map();
+const connectionLimits=new ConnectionLimits(),socketPeers=new WeakMap();   // roomId -> Map(id -> peer)
 const chat = new RoomChat((roomId, message) => { const room=rooms.get(roomId); if(room)broadcast(room,message); });
 setInterval(() => chat.tick(), 50).unref();
 const sports = new Sports(rooms,send,broadcast);
@@ -95,7 +98,8 @@ const num = (v, lo, hi) => {
 /* ---------------------------------------------------------------------
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
-const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProof:(uid,id)=>combat.huntProof(uid,id),onAccount:(uid,a,cmd)=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid){p.access=a;if(!combat.init(p).armorInitialized){p.life.armor=Math.max(0,a.property?.armor||0);p.life.armorInitialized=true;}if(cmd?.type==='buy.armor'){combat.init(p).armor=a.property.armor;send(p.ws,combat.snapshot(p));}}},observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+const combat=new CombatSecurity({catalog:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url))),rules:JSON.parse(fs.readFileSync(new URL('./combat-catalog.json',import.meta.url))),account:uid=>economy.securityAccount(uid)});
 const bombing=new Bombing({fleet:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8')).fleet,send,broadcast,protectedPeer:p=>sports.protected(p)||economy.heistProtected(p.uid)});
 setInterval(()=>bombing.tick(rooms),50).unref();
 setInterval(()=>{economy.heistTick();economy.fishingTick();},100).unref();
@@ -106,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, security:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -123,10 +127,13 @@ const server = http.createServer(async (req, res) => {
   res.end('MIAMI multiplayer relay. 접속은 WebSocket 으로 하세요.\n');
 });
 
+server.requestTimeout=15000;server.headersTimeout=10000;server.maxRequestsPerSocket=200;
 const wss = new WebSocketServer({
   server,
   maxPayload: LIMITS.MSG_BYTES,
+  clientTracking:true,
   verifyClient: (info, done) => {
+    if(!connectionLimits.admit(info.req))return done(false,429,'connection limit');
     if (!ALLOWED.length) return done(true);
     const o = info.origin || '';
     done(ALLOWED.includes(o), 403, 'origin not allowed');
@@ -137,6 +144,7 @@ const wss = new WebSocketServer({
    연결
    --------------------------------------------------------------------- */
 wss.on('connection', (ws, req) => {
+  connectionLimits.add(ws,req);ws.once('close',()=>connectionLimits.drop(ws));ws.once('error',()=>connectionLimits.drop(ws));
   const url = new URL(req.url, 'http://x');
   const roomId = sanitizeRoom(url.searchParams.get('room') || 'lobby');
 
@@ -163,7 +171,7 @@ wss.on('connection', (ws, req) => {
     count: 0, window: Date.now(),
   };
   const leader=[...room.values()][0];peer.ready=false;peer.waiting=!!leader&&!leader.ready;
-  room.set(peer.id, peer);
+  peer.connectedAt=Date.now();socketPeers.set(ws,peer);room.set(peer.id, peer);
 
   send(ws, { t: 'welcome', bombing:1, id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
   send(ws, {t:'chat_state', messages:chat.snapshot(roomId), serverNow:Date.now()});
@@ -188,6 +196,7 @@ wss.on('connection', (ws, req) => {
     let m;
     try { m = JSON.parse(buf); } catch { return; }
     if (!m || typeof m !== 'object') return;
+    if(['warfx','ped','sp','pp','died'].includes(m.t)&&!peer.uid)return;
 
     if (m.t === 's' && Array.isArray(m.s) && m.s.length >= 5){
       peer.s = [
@@ -207,6 +216,7 @@ wss.on('connection', (ws, req) => {
         Number.isFinite(m.s[13])?num(m.s[13], -600, 600):num(m.s[6], 0, 600), // signed longitudinal speed     // optional aircraft roll (a full barrel roll: ±π)
       ];
       if(sports.protected(peer)){peer.s[7]=(peer.s[7]&~(4|8|16|64))|32;peer.s[8]=0;peer.s[4]=0;peer.s[6]=0;}
+      combat.state(peer);
       sports.basket.place(peer);
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
@@ -224,8 +234,11 @@ wss.on('connection', (ws, req) => {
       sports.receive(peer,m);
     } else if (m.t === 'basket'){
       sports.basket.receive(peer,m);
+     } else if(m.t==='hunt_hit'){
+      if(peer.huntPending)return;peer.huntPending=true;combat.huntHit(peer,m).catch(()=>{}).finally(()=>{peer.huntPending=false;});
     } else if(m.t==='bomb'||m.t==='bombnpc'){
-      bombing.receive(room,peer,m);
+      if(m.t==='bombnpc'){if(peer.uid)bombing.receive(room,peer,m);return;}
+      if(peer.bombPending)return;peer.bombPending=true;combat.fighter(peer).then(ok=>{if(ok&&room.has(peer.id)){combat.init(peer).shieldUntil=0;bombing.receive(room,peer,m);}else send(ws,{t:'bomb',phase:'reject',message:'서버에서 로그인과 기체 소유권을 확인해 주세요.'});}).catch(()=>{}).finally(()=>{peer.bombPending=false;});
     } else if (m.t === 'warfx'){
       if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
       // Cosmetic events only: retain existing hit validation, never apply damage here.
@@ -293,13 +306,9 @@ wss.on('connection', (ws, req) => {
       peer.name = sanitizeName(m.name);
       broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
     } else if (m.t === 'hit'){
-      /* PvP : 쏜 쪽이 '맞혔다'고 알리면 맞은 쪽에게 그대로 전달한다.
-         실제로 피가 깎일지는 맞은 쪽이 정한다 (부활 직후 무적이면 무시).
-         서버는 판정하지 않는다 — 물리·시야가 전부 브라우저에 있기 때문이다. */
+      /* Server validates authenticated weapon ownership, range/cadence and canonical damage. */
       if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
-      const target = room.get(num(m.id, 0, 1e9) | 0);
-      if (target && !sports.protected(target) && !economy.heistProtected(target.uid) && target.id !== peer.id && !(peer.s[7]&128) && !(target.s[7]&128))
-        send(target.ws, { t: 'hurt', from: peer.id, dmg: num(m.dmg, 0, 200), w: num(m.w, 0, 63) | 0 });
+      const target = room.get(num(m.id,0,1e9)|0);if(!target||sports.protected(target)||economy.heistProtected(target.uid)||peer.hitPending)return;peer.hitPending=true;combat.hit(peer,target,m).then(hit=>{if(hit&&room.has(peer.id)&&room.has(target.id))send(target.ws,hit);}).catch(()=>{}).finally(()=>{peer.hitPending=false;});
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
       peer.look = m.v.slice(0, 12).map(x => num(x, 0, 255) | 0);
@@ -312,15 +321,16 @@ wss.on('connection', (ws, req) => {
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
       if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
       broadcast(room, { t: 'dead', id: peer.id, by: num(m.by, 0, 1e9) | 0 }, null);
-    } else if (m.t === 'auth' && !peer.uid && !peer.authing){
+    } else if (m.t === 'auth' && !peer.authing && now-(peer.authCheckAt||0)>1000){
       /* 로그인 토큰 확인 → 친구 기능 켜기. 실패해도 게임(가까운 사람 보기)은 그대로 된다. */
-      peer.authing = true;
-      verifyUid(m.token).then(uid => {
+      peer.authing = true;peer.authCheckAt=now;
+      (economy.verifyToken?economy.verifyToken(m.token):verifyUid(m.token)).then(async verified => {
+        const uid=verified?.uid;
         peer.authing = false;
-        if (!uid || !room.has(peer.id)) { send(ws, { t: 'authfail' }); return; }
-        const r = friends.attach(peer, uid, m.friends);
+        if (!uid || !room.has(peer.id)) { if(peer.uid)ws.close(1008,'authentication failed');else send(ws, { t: 'authfail' }); return; }
+        if(peer.uid&&peer.uid!==uid||!connectionLimits.auth(ws,uid)){ws.close(1008,'session limit');return;}peer.authExpires=verified.expiresAt;peer.authToken=m.token;peer.recheckAt=Date.now()+120000;const ledger=await economy.securityAccount(uid);if(!room.has(peer.id))return;const r = friends.attach(peer, uid, m.friends);combat.init(peer,ledger);peer.access=ledger;if(ledger&&!peer.armorLoaded&&!peer.life.armorInitialized){peer.life.armor=Math.max(0,ledger.property?.armor||0);peer.armorLoaded=true;peer.life.armorInitialized=true;}send(ws,combat.snapshot(peer));
         send(ws, { t: 'authok', code: peer.code, incoming: r.incoming, added: r.added });
-      }).catch(() => { peer.authing = false; send(ws, { t: 'authfail' }); });
+      }).catch(() => { peer.authing = false;if(peer.uid)ws.close(1008,'authentication expired');else send(ws, { t: 'authfail' }); });
     } else if (m.t === 'freq'){
       /* 친구 요청 : 코드(어디 있든) 또는 근처 사람의 번호 */
       let target = null;
@@ -367,13 +377,15 @@ wss.on('connection', (ws, req) => {
   ws.on('error', drop);
 });
 
-function send(ws, obj){
-  if (ws.readyState === 1) ws.send(JSON.stringify(obj));
+function send(ws,obj){
+ if(ws.readyState!==1)return;if(ws.bufferedAmount>262144){ws.close(1008,'slow receiver');return;}
+ if(obj.t==='hurt'){const p=socketPeers.get(ws),state=p?combat.damage(p,obj.dmg):null;if(!state)return;ws.send(JSON.stringify(obj));ws.send(JSON.stringify({...state,from:obj.from}));return;}
+ ws.send(JSON.stringify(obj));
 }
 function broadcast(room, obj, exceptId){
   const msg = JSON.stringify(obj);
   for (const p of room.values())
-    if (p.id !== exceptId && p.ws.readyState === 1) p.ws.send(msg);
+    if (p.id !== exceptId && p.ws.readyState === 1){if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);}
 }
 
 /** 가까운 사람(스냅샷과 같은 범위)에게만 보낸다 */
@@ -383,7 +395,7 @@ function broadcastNear(room, from, obj){
     if (p.id === from.id || p.ws.readyState !== 1) continue;
     const dx = p.s[0] - from.s[0], dz = p.s[2] - from.s[2];
     if (p.ready && dx*dx + dz*dz > NEAR2) continue;
-    p.ws.send(msg);
+    if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);
   }
 }
 
@@ -436,6 +448,8 @@ setInterval(() => {
   const now = Date.now(), friendTick = (++tickNo % LIMITS.FRIEND_EVERY) === 0;
   for (const [roomId, room] of rooms){
     for (const p of [...room.values()]){
+      if(p.uid&&now>p.authExpires||!p.uid&&now-p.connectedAt>300000){p.ws.close(1008,'authentication required');continue;}
+      if(p.uid&&now>p.recheckAt&&!p.rechecking&&economy.verifyToken){p.rechecking=true;p.recheckAt=now+120000;economy.verifyToken(p.authToken).then(v=>{if(v.uid!==p.uid)p.ws.close(1008,'session changed');}).catch(()=>p.ws.close(1008,'session revoked')).finally(()=>{p.rechecking=false;});}
       if (now - p.seen > LIMITS.IDLE_MS){ p.ws.close(1000, 'idle'); /* close handler owns sports/friends/bye cleanup */ }
     }
     if (!room.size){ rooms.delete(roomId); chat.drop(roomId); continue; }

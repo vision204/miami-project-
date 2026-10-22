@@ -72,7 +72,7 @@ function tuneClean(t={}){const out={};for(const [k,max] of Object.entries({f:2,w
 export function tuningCost(o,n,P){let v=0;const a=o.t||{},b=n.t||{};if(n.c!==o.c)v+=P.paint;for(const k of ['f','s','l'])if((a[k]||0)!==(b[k]||0))v+=P[k][b[k]||0];if((a.w||0)!==(b.w||0))v+=P.w;for(const k of ['n','pl'])if((b[k]||'')!==(a[k]||'')&&b[k])v+=P[k];for(const k of ['e','x','b','y','u'])for(let i=(a[k]||0)+1;i<=(b[k]||0);i++)v+=P[k][i];for(const k of ['tb','ni','ap','fx'])if(b[k]&&!a[k])v+=P[k]||0;if((b.rc||0)!==(a.rc||0)&&b.rc)v+=P.rc||0;if(((b.wr||0)!==(a.wr||0)||(b.wc||0)!==(a.wc||0))&&b.wr)v+=P.wr||0;return v;}
 
 // The server accepts intents, never client totals, cash, ownership lists or paid prices.
-export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
+export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,huntProof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
  if(!account||account.schema!==1)fail('invalid-account','계정 원장을 불러올 수 없습니다.',503);
  const s=copy(account),p=s.property;let spent=0,result={},flightSave=null;
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
@@ -123,6 +123,7 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
   if(h.claims[a.id]&&now-h.claims[a.id]<HUNT_RESPAWN-20000)fail('hunt-claimed','이미 수확한 동물이에요. 다시 나타나면 사냥할 수 있어요.',409);
   if(h.recent.length&&now-h.recent[h.recent.length-1]<1500)fail('rate-limit','수확이 너무 빨라요. 잠시 뒤 다시 해 주세요.',429);
   if(h.recent.length>=40)fail('hunt-limit','10분 동안 너무 많이 수확했어요. 잠시 쉬었다가 사냥해 주세요.',429);
+  if(!huntProof||huntProof.id!==a.id||!Number.isFinite(huntProof.deadAt)||now-huntProof.deadAt>HUNT_RESPAWN||!Array.isArray(huntProof.pos)||Math.hypot(at[0]-huntProof.pos[0],at[1]-huntProof.pos[2])>12)fail('hunt-unverified','서버에서 처치 기록을 확인하지 못했어요.',409);
   const reward=a.price;credit(s,reward);h.claims[a.id]=now;h.recent.push(now);h.total+=reward;
   const r=h.records[a.species]&&typeof h.records[a.species]==='object'?h.records[a.species]:{count:0,best:0,total:0};r.count=(r.count|0)+1;r.best=Math.max(r.best|0,reward);r.total=(money(r.total)?r.total:0)+reward;h.records[a.species]=r;
   result={reward,species:a.species,name:speciesById(a.species).name,animal:a.id};break;}

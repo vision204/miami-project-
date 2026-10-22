@@ -7,7 +7,7 @@ import{Fishing}from'./fishing.js';
 import {Heists} from './heists.js';
 
 export class EconomyStore {
- constructor(db,catalog,{observe=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});}
+ constructor(db,catalog,{observe=()=>null,huntProof=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.huntProof=huntProof;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});}
  async execute(uid,request){
   const starting=request?.command?.type==='heist.start';
   if(starting){try{this.heists.reserve(uid);}catch(e){throw new EconomyError('heist-busy',e.message,409);}}
@@ -45,7 +45,7 @@ export class EconomyStore {
    if(request.version!==account.version)throw new EconomyError('version-conflict','다른 창에서 거래가 변경되었습니다. 다시 확인해 주세요.',409);
    let out;
    if(request.type==='save')out=applyProgress(account,request.save,this.catalog);
-   else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),fishingProof:this.fishing.proof(uid,request.command?.run),coupons:this.coupons,observation:this.observe(uid)});
+   else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),fishingProof:this.fishing.proof(uid,request.command?.run),huntProof:this.huntProof(uid,request.command?.animal),coupons:this.coupons,observation:this.observe(uid)});
    account=out.account;
    if(Buffer.byteLength(JSON.stringify(account))>750000)throw new EconomyError('account-too-large','계정 저장 한도를 관리자에게 확인해 주세요.',409);
    tx.set(ref,account);
