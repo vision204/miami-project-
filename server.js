@@ -1,3 +1,5 @@
+import {Bombing} from './bombing.js';
+import fs from 'node:fs';
 /* =====================================================================
    MIAMI 멀티플레이 중계 서버
    ---------------------------------------------------------------------
@@ -28,7 +30,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'atelier-20261022-1';                     // 2026-10-19 : NPC 사망 공유 'ped' (older: fishing-1)
+const BUILD = 'bombing-20261022-1';                     // 2026-10-19 : NPC 사망 공유 'ped' (older: fishing-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -94,6 +96,8 @@ const num = (v, lo, hi) => {
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
 const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+const bombing=new Bombing({fleet:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8')).fleet,send,broadcast,protectedPeer:p=>sports.protected(p)||economy.heistProtected(p.uid)});
+setInterval(()=>bombing.tick(rooms),50).unref();
 setInterval(()=>{economy.heistTick();economy.fishingTick();},100).unref();
 const server = http.createServer(async (req, res) => {
   if(await economy.handle(req,res))return;
@@ -102,7 +106,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, bombing:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -161,7 +165,7 @@ wss.on('connection', (ws, req) => {
   const leader=[...room.values()][0];peer.ready=false;peer.waiting=!!leader&&!leader.ready;
   room.set(peer.id, peer);
 
-  send(ws, { t: 'welcome', id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
+  send(ws, { t: 'welcome', bombing:1, id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
   send(ws, {t:'chat_state', messages:chat.snapshot(roomId), serverNow:Date.now()});
   /* 새로 들어온 사람에게 기존 인원의 이름을 먼저 알려준다.
      (예전에는 이걸 별도 connection 핸들러 + setTimeout 으로 했는데,
@@ -220,6 +224,8 @@ wss.on('connection', (ws, req) => {
       sports.receive(peer,m);
     } else if (m.t === 'basket'){
       sports.basket.receive(peer,m);
+    } else if(m.t==='bomb'||m.t==='bombnpc'){
+      bombing.receive(room,peer,m);
     } else if (m.t === 'warfx'){
       if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
       // Cosmetic events only: retain existing hit validation, never apply damage here.
