@@ -1,4 +1,4 @@
-// Ephemeral room chat: text lives only in memory for ten seconds, never in logs/storage.
+// Ephemeral room chat: text lives only in memory for ten seconds, never in logs/storage unless a player explicitly reports a message.
 export const CHAT_TTL = 10000;
 export class RoomChat {
   constructor(broadcast, clock = Date.now) {
@@ -25,7 +25,8 @@ export class RoomChat {
     if (!text) return;
     peer.chatTimes = (peer.chatTimes || []).filter(t => t > now - CHAT_TTL);
     peer.chatTimes.push(now);
-    const message = {id:++this.serial, from:peer.id, name:peer.name, text, expiresAt:now + CHAT_TTL};
+    const message = {id:++this.serial, from:peer.id, name:peer.name, text, sentAt:now, expiresAt:now + CHAT_TTL};
+    Object.defineProperty(message,'senderUid',{value:peer.uid||null,enumerable:false});
     this.prune(peer.roomId);
     if (!this.rooms.has(peer.roomId)) this.rooms.set(peer.roomId, new Map());
     this.rooms.get(peer.roomId).set(message.id, message);

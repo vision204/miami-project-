@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { RoomChat } from './chat.js';
+import {ChatReports,FirestoreReports} from './chat-reports.js';
 import { Sports } from './sports.js';
 import { Friends, validUid } from './friends.js';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -32,7 +33,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'airport-row-20261023-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
+const BUILD = 'chat-reports-20261023-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -99,6 +100,8 @@ const num = (v, lo, hi) => {
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
 const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProof:(uid,id)=>combat.huntProof(uid,id),onAccount:(uid,a,cmd)=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid){p.access=a;if(!combat.init(p).armorInitialized){p.life.armor=Math.max(0,a.property?.armor||0);p.life.armorInitialized=true;}if(cmd?.type==='buy.armor'){combat.init(p).armor=a.property.armor;send(p.ws,combat.snapshot(p));}}},observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+const reportRepo=new FirestoreReports(()=>economy.moderationBackend()),chatReports=new ChatReports({chat,repo:reportRepo,send,peers:()=>[...rooms.values()].flatMap(r=>[...r.values()])});
+setInterval(()=>{chatReports.prune();reportRepo.cleanup().catch(()=>{});},60000).unref();
 const combat=new CombatSecurity({catalog:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url))),rules:JSON.parse(fs.readFileSync(new URL('./combat-catalog.json',import.meta.url))),account:uid=>economy.securityAccount(uid)});
 const bombing=new Bombing({fleet:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8')).fleet,send,broadcast,protectedPeer:p=>sports.protected(p)||economy.heistProtected(p.uid)});
 setInterval(()=>bombing.tick(rooms),50).unref();
@@ -110,7 +113,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -302,7 +305,10 @@ wss.on('connection', (ws, req) => {
         else if (k === 'point') return;
       }
       if(k==='sit'||k==='stand')broadcast(room,out);else broadcastNear(room, peer, out);
+    } else if(m.t==='chat_reports'){
+      void chatReports.handle(peer,m);
     } else if (m.t === 'chat'){
+      if(!peer.uid)return;
       chat.receive(peer, m.text, message => send(ws,message));
     } else if (m.t === 'name'){
       peer.name = sanitizeName(m.name);
