@@ -32,7 +32,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'security-20261022-1';                     // 2026-10-19 : NPC 사망 공유 'ped' (older: fishing-1)
+const BUILD = 'tiers-20261022-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -356,10 +356,15 @@ wss.on('connection', (ws, req) => {
       /* 지금 이 서버에 접속한 모든 사람(모든 방) — 돈 많은 순 */
       const all = [];
       for (const r of rooms.values()) for (const p of r.values())
-        if (Number.isFinite(p.cash)) all.push({ id: p.id, name: p.name, cash: p.cash });
+        if (Number.isFinite(p.cash)) all.push({ id: p.id, name: p.name, cash: p.cash, tier: p.uid ? economy.tierCached(p.uid) : null });
       all.sort((a, b) => b.cash - a.cash || a.id - b.id);
       const mine = all.findIndex(r => r.id === peer.id);
       send(ws, { t: 'rank', rows: all.slice(0, 20), me: peer.id, myRank: mine >= 0 ? mine + 1 : 0, total: all.length });
+    } else if (m.t === 'tier'){
+      /* 내 티어 (2026-10-22) : 로그인 확인된 연결만. 2초에 한 번까지. 계산은 tiers.js (서버 원장 + 기록) */
+      if(!peer.uid){send(ws,{t:'tier',error:'login'});return;}
+      if(now-(peer.tierAt||0)<2000){send(ws,{t:'tier',error:'busy'});return;}peer.tierAt=now;
+      economy.tier(peer.uid).then(me=>send(ws,{t:'tier',me})).catch(()=>send(ws,{t:'tier',error:'unavailable'}));
     } else if (m.t === 'ping'){
       send(ws, { t: 'pong', c: m.c });
     }
