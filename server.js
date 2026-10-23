@@ -32,7 +32,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'tiers-20261022-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
+const BUILD = 'boxing-20261023-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -110,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, security:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -217,7 +217,7 @@ wss.on('connection', (ws, req) => {
       ];
       if(sports.protected(peer)){peer.s[7]=(peer.s[7]&~(4|8|16|64))|32;peer.s[8]=0;peer.s[4]=0;peer.s[6]=0;}
       combat.state(peer);
-      sports.basket.place(peer);
+      sports.basket.place(peer);sports.boxing.place(peer);
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
       if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
       peer.stateAt=now;economy.observe(peer.uid,peer.s);
@@ -232,6 +232,8 @@ wss.on('connection', (ws, req) => {
       const state=economy.heistAction(peer.uid,m);send(peer.ws,{t:'heist',state});
     } else if (m.t === 'golf'){
       sports.receive(peer,m);
+    } else if (m.t === 'boxing'){
+      sports.boxing.receive(peer,m);
     } else if (m.t === 'basket'){
       sports.basket.receive(peer,m);
      } else if(m.t==='hunt_hit'){
