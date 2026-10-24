@@ -1,3 +1,4 @@
+import {sanitizeTierBadge} from './tier-badges.js';
 import {CombatSecurity} from './combat-security.js';
 import {ConnectionLimits} from './connection-limits.js';
 import {Bombing} from './bombing.js';
@@ -33,7 +34,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'chat-reports-20261023-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
+const BUILD = 'chat-reports-20261024-2';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -113,7 +114,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -323,8 +324,9 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'look', id: peer.id, v: peer.look }, peer.id);
     } else if (m.t === 'ctune' && Array.isArray(m.v)){
       /* 차 튜닝 (2026-10-08) : 색·휠·스포일러 같은 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
-      peer.ctune = m.v.slice(0, 16).map(x => num(x, 0, 255) | 0);
-      broadcast(room, { t: 'ctune', id: peer.id, v: peer.ctune }, peer.id);
+      const v=m.v.slice(0,16).map(x=>num(x,0,255)|0),seq=peer.ctuneSeq=(peer.ctuneSeq||0)+1;
+      const publish=value=>{if(peer.ctuneSeq!==seq||!room.has(peer.id))return;peer.ctune=value;broadcast(room,{t:'ctune',id:peer.id,v:value},peer.id);};
+      if(v[11]>=128&&v[11]<=135){if(!peer.uid){v[11]=0;publish(v);}else economy.tier(peer.uid).then(t=>publish(sanitizeTierBadge(v,t?.tier))).catch(()=>publish(sanitizeTierBadge(v,null)));}else publish(v);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
       if(sports.protected(peer)||economy.heistProtected(peer.uid))return;

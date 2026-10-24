@@ -1,0 +1,3 @@
+import assert from 'node:assert/strict';import {sanitizeTierBadge,TIER_BADGE_ORDER} from './tier-badges.js';
+for(const [i,t] of TIER_BADGE_ORDER.entries()){const v=Array.from({length:16},(_,n)=>n);v[11]=128+i;assert.deepEqual(sanitizeTierBadge(v,t),v);for(const other of TIER_BADGE_ORDER.filter(k=>k!==t))assert.equal(sanitizeTierBadge(v,other)[11],0);assert.equal(sanitizeTierBadge(v,null)[11],0);assert.equal(v[11],128+i);}
+const v=Array(16).fill(7);assert.deepEqual(sanitizeTierBadge(v,null),v);assert.deepEqual(sanitizeTierBadge([0],null),[0]);console.log('Tier badge validation: 8 tiers, forged grades blocked, cosmetics and source untouched');
