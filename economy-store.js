@@ -35,6 +35,11 @@ export class EconomyStore {
    let account=ledger.exists?ledger.data():migrateAccount(legacy.exists?legacy.data():null,this.catalog);
    if(done.exists){if(done.data().hash!==hash)throw new EconomyError('idempotency-conflict','이미 사용한 거래 식별자입니다.',409);return {account,result:done.data().result||{},replayed:true};}
    if(request.type==='load'){
+    // A relay restart or a lost race result must not strand an entry fee.
+    if(account.speedRace?.expiresAt<Date.now()){
+     account.property.cash+=1000;delete account.speedRace;account.version++;account.updatedAt=Date.now();
+     tx.set(ref,account);tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});
+    }
     const granted=awardFounder(account,uid,founders.data(),this.catalog);
     if(granted&&ledger.exists)tx.set(ref,account);
     if(granted)tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});
@@ -42,6 +47,7 @@ export class EconomyStore {
     return {account,result:{},replayed:false};
    }
    if(!ledger.exists)throw new EconomyError('load-required','계정 원장을 먼저 불러와 주세요.',409);
+   if(account.speedRace&&['job.start','heist.start','fishing.start','vehicle.use'].includes(request.command?.type))throw new EconomyError('race-active','스피드레이싱을 먼저 마쳐 주세요.',409);
    if(request.version!==account.version)throw new EconomyError('version-conflict','다른 창에서 거래가 변경되었습니다. 다시 확인해 주세요.',409);
    let out;
    if(request.type==='save')out=applyProgress(account,request.save,this.catalog);

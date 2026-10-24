@@ -1,3 +1,4 @@
+import {SpeedRacing,RaceLedger} from './speed-racing.js';
 import {sanitizeTierBadge} from './tier-badges.js';
 import {CombatSecurity} from './combat-security.js';
 import {ConnectionLimits} from './connection-limits.js';
@@ -34,7 +35,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'tune-wheels-engine-20261024-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
+const BUILD = 'speed-racing-20261024-1';
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -104,7 +105,9 @@ const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProo
 const reportRepo=new FirestoreReports(()=>economy.moderationBackend()),chatReports=new ChatReports({chat,repo:reportRepo,send,peers:()=>[...rooms.values()].flatMap(r=>[...r.values()])});
 setInterval(()=>{chatReports.prune();reportRepo.cleanup().catch(()=>{});},60000).unref();
 const combat=new CombatSecurity({catalog:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url))),rules:JSON.parse(fs.readFileSync(new URL('./combat-catalog.json',import.meta.url))),account:uid=>economy.securityAccount(uid)});
-const bombing=new Bombing({fleet:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8')).fleet,send,broadcast,protectedPeer:p=>sports.protected(p)||economy.heistProtected(p.uid)});
+const speedRacing=new SpeedRacing({rooms,send,broadcast,ledger:new RaceLedger(()=>economy.moderationBackend()),blocked:p=>sports.protected(p)||economy.heistProtected(p.uid)});
+setInterval(()=>speedRacing.tick(),100).unref();
+const bombing=new Bombing({fleet:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8')).fleet,send,broadcast,protectedPeer:p=>sports.protected(p)||economy.heistProtected(p.uid)||speedRacing.protected(p)});
 setInterval(()=>bombing.tick(rooms),50).unref();
 setInterval(()=>{economy.heistTick();economy.fishingTick();},100).unref();
 const server = http.createServer(async (req, res) => {
@@ -114,7 +117,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -227,6 +230,8 @@ wss.on('connection', (ws, req) => {
       peer.stateAt=now;economy.observe(peer.uid,peer.s);
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.heistSentAt||0)>200){peer.heistSentAt=now;const state=economy.heistState(peer.uid);if(state||peer.hadHeist){send(peer.ws,{t:'heist',state});peer.hadHeist=!!state;}}
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.fishingSentAt||0)>150){peer.fishingSentAt=now;const state=economy.fishingState(peer.uid);if(state||peer.hadFishing){send(peer.ws,{t:'fish',state});peer.hadFishing=!!state;}}
+    } else if(m.t==='speedrace'){
+      speedRacing.receive(peer,m);
     } else if (m.t === 'fish'){
       if(!peer.uid||!peer.ready)return;if(now-(peer.fishingActionAt||0)<70&&!m.hook&&m.k!=='cancel')return;peer.fishingActionAt=now;
       const state=economy.fishingAction(peer.uid,m);send(peer.ws,{t:'fish',state});
@@ -246,7 +251,7 @@ wss.on('connection', (ws, req) => {
       if(m.t==='bombnpc'){if(peer.uid)bombing.receive(room,peer,m);return;}
       if(peer.bombPending)return;peer.bombPending=true;combat.fighter(peer).then(ok=>{if(ok&&room.has(peer.id)){combat.init(peer).shieldUntil=0;bombing.receive(room,peer,m);}else send(ws,{t:'bomb',phase:'reject',message:'서버에서 로그인과 기체 소유권을 확인해 주세요.'});}).catch(()=>{}).finally(()=>{peer.bombPending=false;});
     } else if (m.t === 'warfx'){
-      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
+      if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
       // Cosmetic events only: retain existing hit validation, never apply damage here.
       const vec = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
       if (!peer.ready || (peer.s[7] & (16|128)) || !vec(m.o) || typeof m.id !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(m.id)) return;
@@ -269,7 +274,7 @@ wss.on('connection', (ws, req) => {
     } else if (m.t === 'ped'){
       /* NPC 사망 공유 (2026-10-19) : 화면 연출만 전달한다. 돈·처치 수는 죽인 사람 브라우저에서 이미 끝났고,
          받는 쪽은 같은 번호(결정론적 슬롯)의 NPC 를 쓰러뜨리기만 한다. 가까운 사람에게만 보낸다. */
-      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
+      if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
       if (!peer.ready || (peer.s[7] & 128) || !Array.isArray(m.k) || !m.k.length) return;
       if (now-(peer.pedWindow||0)>1000){peer.pedWindow=now;peer.pedCount=0;}
       const out=[];
@@ -316,8 +321,8 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
     } else if (m.t === 'hit'){
       /* Server validates authenticated weapon ownership, range/cadence and canonical damage. */
-      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
-      const target = room.get(num(m.id,0,1e9)|0);if(!target||sports.protected(target)||economy.heistProtected(target.uid)||peer.hitPending)return;peer.hitPending=true;combat.hit(peer,target,m).then(hit=>{if(hit&&room.has(peer.id)&&room.has(target.id))send(target.ws,hit);}).catch(()=>{}).finally(()=>{peer.hitPending=false;});
+      if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
+      const target = room.get(num(m.id,0,1e9)|0);if(!target||sports.protected(target)||economy.heistProtected(target.uid)||speedRacing.protected(target)||peer.hitPending)return;peer.hitPending=true;combat.hit(peer,target,m).then(hit=>{if(hit&&room.has(peer.id)&&room.has(target.id))send(target.ws,hit);}).catch(()=>{}).finally(()=>{peer.hitPending=false;});
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
       peer.look = m.v.slice(0, 12).map(x => num(x, 0, 255) | 0);
@@ -329,7 +334,7 @@ wss.on('connection', (ws, req) => {
       if(v[11]>=128&&v[11]<=135){if(!peer.uid){v[11]=0;publish(v);}else economy.tier(peer.uid).then(t=>publish(sanitizeTierBadge(v,t?.tier))).catch(()=>publish(sanitizeTierBadge(v,null)));}else publish(v);
     } else if (m.t === 'died'){
       /* 죽은 쪽이 스스로 알린다. 모두에게 알려 킬 로그를 띄운다. */
-      if(sports.protected(peer)||economy.heistProtected(peer.uid))return;
+      if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
       broadcast(room, { t: 'dead', id: peer.id, by: num(m.by, 0, 1e9) | 0 }, null);
     } else if (m.t === 'auth' && !peer.authing && now-(peer.authCheckAt||0)>1000){
       /* 로그인 토큰 확인 → 친구 기능 켜기. 실패해도 게임(가까운 사람 보기)은 그대로 된다. */
