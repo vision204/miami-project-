@@ -69,7 +69,8 @@ export class TierBoard{
  async refresh(){
   const [acc,pl]=await Promise.all([this.db.collection('economyAccounts').select('property','stats').get(),this.db.collection('players').select('stats').get()]);
   const stats=new Map();for(const d of pl.docs)stats.set(d.id,d.data());
-  const rows=acc.docs.map(d=>({uid:d.id,raw:rawOf(d.data(),stats.get(d.id),this.catalog)}));
+  // Disposable QA identities never participate in the public ranking population.
+  const rows=acc.docs.filter(d=>!d.id.startsWith('qa-bomb-')).map(d=>({uid:d.id,raw:rawOf(d.data(),stats.get(d.id),this.catalog)}));
   this.board=buildBoard(rows);this.at=this.now();return this.board;
  }
  async ensure(){if(this.board&&this.now()-this.at<this.ttlMs)return this.board;if(!this.loading)this.loading=this.refresh().finally(()=>{this.loading=null;});return this.loading;}
