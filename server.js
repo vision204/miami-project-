@@ -34,7 +34,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'chat-reports-20261024-3';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
+const BUILD = 'heli-fare-20261024-1';                        // 2026-10-22 : 플레이어 티어 'tier' (older: security-20261022-1)
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
