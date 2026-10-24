@@ -1,3 +1,4 @@
+import {TestPayments} from './payment-test.js';
 import {ConnectionLimits} from './connection-limits.js';
 import {createFounderRefresh} from './founders.js';
 import fs from 'node:fs';
@@ -20,6 +21,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8'));store=new EconomyStore(db,catalog,{observe,huntProof,coupons:JSON.parse(process.env.ECONOMY_COUPONS_JSON||'{}')});tiers=new TierBoard(db,catalog);
  }catch{error='configuration-required';}}
  // Test injection is accepted only by explicitly constructed local test servers, never from requests.
+ let paymentTests=null;
  let available=!!testStore;const configured=!!store&&(enabled||!!testStore),limits=new Map(),balances=new Map();
  async function balance(uid){if(!available)return null;const cached=balances.get(uid);if(cached&&Date.now()-cached.at<60000)return cached.task||cached.value;const entry={at:Date.now(),value:null};entry.task=store.balance(uid).then(value=>{entry.value=value;delete entry.task;return value;}).catch(()=>{delete entry.task;return null;});balances.set(uid,entry);if(balances.size>10000)for(const [id,v]of balances)if(Date.now()-v.at>60000)balances.delete(id);return entry.task;}
  if(configured&&!testStore){const check=async()=>{try{available=(await store.db.doc('economyControl/config').get()).data()?.lockedVersion===1;}catch{available=false;}};check();setInterval(check,30000).unref();}
@@ -31,7 +33,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   const origin=req.headers.origin;if(origin){if(!allowed.includes(origin)){send(res,403,{ok:false,code:'origin-denied'});return true;}res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
   if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','POST, GET, OPTIONS');res.writeHead(204);res.end();return true;}
   if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,security:1,atelier:1,founders:1,airportFlights:1,golfSets:1,fishing:1,fishingCatalog:2,hunting:1,attendance:1,skinBind:1,enabled:enabled||!!testStore,configured,available,configuration:error});return true;}
-  if(req.url!=='/economy/transaction'||req.method!=='POST'){send(res,404,{ok:false,code:'not-found'});return true;}
+  if(!['/economy/transaction','/economy/payment-test'].includes(req.url)||req.method!=='POST'){send(res,404,{ok:false,code:'not-found'});return true;}
   if(!available){send(res,503,{ok:false,code:'economy-unavailable',message:'서버 거래 연결을 준비 중입니다.'});return true;}
   const ip=ipResolver.ip(req),time=Date.now();let bucket=httpIPs.get(ip);if(!bucket||time-bucket.at>60000)bucket={at:time,n:0};bucket.n++;httpIPs.set(ip,bucket);if(httpIPs.size>5000)for(const[k,v]of httpIPs)if(time-v.at>60000)httpIPs.delete(k);if(bucket.n>300||httpInFlight>=64){send(res,429,{ok:false,code:'rate-limit'});return true;}httpInFlight++;
   try{
@@ -42,6 +44,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
    if(!String(req.headers['content-type']||'').startsWith('application/json'))throw new EconomyError('invalid-content-type','JSON 요청이 필요합니다.',415);
    let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>850000)throw new EconomyError('payload-too-large','요청이 너무 큽니다.',413);chunks.push(chunk);}
    let data;try{data=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new EconomyError('invalid-json','요청 형식을 확인해 주세요.');}
+   if(req.url==='/economy/payment-test'){paymentTests??=new TestPayments(store.db);const result=await paymentTests.execute(uid,data);send(res,200,{ok:true,...result});return true;}
    // uid, price, cash, reward fields in the body do not select identity or authority.
    if(data.type==='load'&&refreshFounders){try{await refreshFounders(uid);}catch{console.warn('[founders] Registration sync unavailable; existing entitlements remain valid.');}}
    const out=await store.execute(uid,data);securityCache.delete(uid);onAccount(uid,out.account,data.command);balances.set(uid,{at:Date.now(),value:out.account.property.cash});send(res,200,{ok:true,...out});
