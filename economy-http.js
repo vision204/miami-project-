@@ -22,6 +22,8 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
  }catch{error='configuration-required';}}
  // Test injection is accepted only by explicitly constructed local test servers, never from requests.
  let paymentTests=null;
+ // Durable pending refunds resume after restart; disabling new tests must not strand holds.
+ const refundTimer=setInterval(()=>{if(!available||!store?.db||!/^test_gsk_/.test(process.env.TOSS_TEST_SECRET_KEY||''))return;paymentTests??=new TestPayments(store.db);paymentTests.refunds.tick().catch(()=>{});},15000);refundTimer.unref();
  let available=!!testStore;const configured=!!store&&(enabled||!!testStore),limits=new Map(),balances=new Map();
  async function balance(uid){if(!available)return null;const cached=balances.get(uid);if(cached&&Date.now()-cached.at<60000)return cached.task||cached.value;const entry={at:Date.now(),value:null};entry.task=store.balance(uid).then(value=>{entry.value=value;delete entry.task;return value;}).catch(()=>{delete entry.task;return null;});balances.set(uid,entry);if(balances.size>10000)for(const [id,v]of balances)if(Date.now()-v.at>60000)balances.delete(id);return entry.task;}
  if(configured&&!testStore){const check=async()=>{try{available=(await store.db.doc('economyControl/config').get()).data()?.lockedVersion===1;}catch{available=false;}};check();setInterval(check,30000).unref();}
