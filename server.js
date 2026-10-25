@@ -1,3 +1,4 @@
+import{aurelisPrivate}from'./aurelis-privacy.js';
 import {SpeedRacing,RaceLedger} from './speed-racing.js';
 import {sanitizeTierBadge} from './tier-badges.js';
 import {CombatSecurity} from './combat-security.js';
@@ -35,7 +36,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'payment-refunds-20261025-1';
+const BUILD = 'aurelis-privacy-20261026-1';
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -117,7 +118,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, aurelisPrivacy:1, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -177,7 +178,7 @@ wss.on('connection', (ws, req) => {
     seen: Date.now(),
     count: 0, window: Date.now(),
   };
-  const leader=[...room.values()][0];peer.ready=false;peer.waiting=!!leader&&!leader.ready;
+  const leader=[...room.values()].find(p=>!aurelisPrivate(p));peer.ready=false;peer.waiting=!!leader&&!leader.ready;
   peer.connectedAt=Date.now();socketPeers.set(ws,peer);room.set(peer.id, peer);
 
   send(ws, { t: 'welcome', bombing:1, id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
@@ -205,6 +206,7 @@ wss.on('connection', (ws, req) => {
     if (!m || typeof m !== 'object') return;
     if(['warfx','ped','sp','pp','died'].includes(m.t)&&!peer.uid)return;
 
+    if(aurelisPrivate(peer)&&['hit','warfx','ped','sp','pp','died','bomb','bombnpc','hunt_hit','golf','basket','boxing','speedrace'].includes(m.t))return;
     if (m.t === 's' && Array.isArray(m.s) && m.s.length >= 5){
       peer.s = [
         num(m.s[0], -20000, 20000),   // x
@@ -223,10 +225,13 @@ wss.on('connection', (ws, req) => {
         Number.isFinite(m.s[13])?num(m.s[13], -600, 600):num(m.s[6], 0, 600), // signed longitudinal speed     // optional aircraft roll (a full barrel roll: ±π)
       ];
       if(sports.protected(peer)){peer.s[7]=(peer.s[7]&~(4|8|16|64))|32;peer.s[8]=0;peer.s[4]=0;peer.s[6]=0;}
+      const privateNow=aurelisPrivate(peer);if(privateNow)peer.s[7]|=128;
+      if(privateNow&&!peer.aurelisPrivate){for(const other of room.values())other.known.delete(peer.id);broadcast(room,{t:'private',id:peer.id},peer.id);}
+      peer.aurelisPrivate=privateNow;
       combat.state(peer);
       sports.basket.place(peer);sports.boxing.place(peer);
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
-      if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
+      if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting&&!privateNow){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
       peer.stateAt=now;economy.observe(peer.uid,peer.s);
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.heistSentAt||0)>200){peer.heistSentAt=now;const state=economy.heistState(peer.uid);if(state||peer.hadHeist){send(peer.ws,{t:'heist',state});peer.hadHeist=!!state;}}
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.fishingSentAt||0)>150){peer.fishingSentAt=now;const state=economy.fishingState(peer.uid);if(state||peer.hadFishing){send(peer.ws,{t:'fish',state});peer.hadFishing=!!state;}}
@@ -322,7 +327,7 @@ wss.on('connection', (ws, req) => {
     } else if (m.t === 'hit'){
       /* Server validates authenticated weapon ownership, range/cadence and canonical damage. */
       if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
-      const target = room.get(num(m.id,0,1e9)|0);if(!target||sports.protected(target)||economy.heistProtected(target.uid)||speedRacing.protected(target)||peer.hitPending)return;peer.hitPending=true;combat.hit(peer,target,m).then(hit=>{if(hit&&room.has(peer.id)&&room.has(target.id))send(target.ws,hit);}).catch(()=>{}).finally(()=>{peer.hitPending=false;});
+      const target = room.get(num(m.id,0,1e9)|0);if(!target||aurelisPrivate(target)||sports.protected(target)||economy.heistProtected(target.uid)||speedRacing.protected(target)||peer.hitPending)return;peer.hitPending=true;combat.hit(peer,target,m).then(hit=>{if(hit&&room.has(peer.id)&&room.has(target.id))send(target.ws,hit);}).catch(()=>{}).finally(()=>{peer.hitPending=false;});
     } else if (m.t === 'look' && Array.isArray(m.v)){
       /* 캐릭터 외형 : 팔레트 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
       peer.look = m.v.slice(0, 12).map(x => num(x, 0, 255) | 0);
@@ -405,14 +410,15 @@ function send(ws,obj){
 function broadcast(room, obj, exceptId){
   const msg = JSON.stringify(obj);
   for (const p of room.values())
-    if (p.id !== exceptId && p.ws.readyState === 1){if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);}
+    if (p.id !== exceptId && p.ws.readyState === 1 && !(['warfx','ped','sp','pp','dead'].includes(obj.t)&&aurelisPrivate(p))){if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);}
 }
 
 /** 가까운 사람(스냅샷과 같은 범위)에게만 보낸다 */
 function broadcastNear(room, from, obj){
+  if(aurelisPrivate(from))return;
   const msg = JSON.stringify(obj);
   for (const p of room.values()){
-    if (p.id === from.id || p.ws.readyState !== 1) continue;
+    if (p.id === from.id || p.ws.readyState !== 1 || aurelisPrivate(p)) continue;
     const dx = p.s[0] - from.s[0], dz = p.s[2] - from.s[2];
     if (p.ready && dx*dx + dz*dz > NEAR2) continue;
     if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);
@@ -484,7 +490,7 @@ setInterval(() => {
       if (me.bin){
         const parts = [me.motion?SNAP_MOTION_HEAD:SNAP_HEAD], known = new Map();
         for (const o of all){
-          if (o.id === me.id || !o.ready) continue;
+          if (o.id === me.id || !o.ready || aurelisPrivate(o)) continue;
           const dx = o.s[0] - me.s[0], dz = o.s[2] - me.s[2];
           if (me.ready && dx*dx + dz*dz > NEAR2) continue;
           const ver=me.motion?o.motionVer:o.ver;
@@ -499,7 +505,7 @@ setInterval(() => {
       }
       const others = [];
       for (const o of all){
-        if (o.id === me.id || !o.ready) continue;
+        if (o.id === me.id || !o.ready || aurelisPrivate(o)) continue;
         const dx = o.s[0] - me.s[0], dz = o.s[2] - me.s[2];
         if (me.ready && dx*dx + dz*dz > NEAR2) continue;
         others.push([o.id, ...o.s.map(v => Math.round(v * 100) / 100)]);
@@ -514,7 +520,7 @@ setInterval(() => {
       const a = [];
       for (const uid of me.friends){
         for (const o of friends.online.get(uid) || []){
-          if (!o.ready || !friends.mutual(me, o)) continue;
+          if (!o.ready || aurelisPrivate(o) || !friends.mutual(me, o)) continue;
           a.push([o.uid, o.roomId === me.roomId ? o.id : 0, Math.round(o.s[0]), Math.round(o.s[2]), o.s[4], o.name]);
           break;
         }
