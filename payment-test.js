@@ -30,7 +30,7 @@ export class TestPayments{
  }
  async execute(uid,data){
   this.authorize(uid);
-  if(data.action==='config')return {mode:'test',clientKey:this.config.client,customerKey:digest('miami-test:'+uid),products:TEST_PRODUCTS};
+  if(data.action==='config')return {mode:'test',clientKey:this.config.client,customerKey:digest('miami-test:'+uid).slice(0,40),products:TEST_PRODUCTS};
   if(data.action==='create'){
    if(!/^[\w-]{16,80}$/.test(data.requestId||''))fail('invalid-request-id');
    const product=TEST_PRODUCTS.find(p=>p.id===data.productId);if(!product)fail('invalid-product');
