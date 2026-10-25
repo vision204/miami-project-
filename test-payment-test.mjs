@@ -6,7 +6,7 @@ class DB{constructor(){this.map=new Map();this.tail=Promise.resolve();}doc(path)
 const db=new DB();let current,approvals=0;
 const svc=new TestPayments(db,{config:{enabled:true,secret:'test_gsk_fake',client:'test_gck_fake',users:['qa']},fetcher:async(url,options)=>{if(options.method==='POST'){approvals++;current.status='DONE';}return {ok:true,json:async()=>structuredClone(current)};}});
 await assert.rejects(()=>svc.execute('stranger',{action:'config'}));
-assert.match((await svc.execute('qa',{action:'config'})).customerKey,/^[a-zA-Z0-9_=-.@]{2,50}$/);
+assert.match((await svc.execute('qa',{action:'config'})).customerKey,/^[a-zA-Z0-9_=.@-]{2,50}$/);
 const order=await svc.execute('qa',{action:'create',requestId:'request_1234567890123',productId:'cash-starter',amount:1});assert.equal(order.amount,6500);
 assert.equal((await svc.execute('qa',{action:'create',requestId:'request_1234567890123',productId:'cash-starter'})).id,order.id);
 await assert.rejects(()=>svc.execute('qa',{action:'create',requestId:'request_1234567890123',productId:'cash-city'}));
