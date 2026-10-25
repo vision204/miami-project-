@@ -231,7 +231,8 @@ wss.on('connection', (ws, req) => {
       combat.state(peer);
       sports.basket.place(peer);sports.boxing.place(peer);
       if(!(peer.s[7]&128))peer.anchor=[peer.s[0],peer.s[2]];
-      if(!peer.ready){peer.ready=true;for(const p of room.values())if(p.waiting&&!privateNow){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}}
+      if(!peer.ready)peer.ready=true;
+      if(!privateNow)for(const p of room.values())if(p.waiting){p.waiting=false;send(p.ws,{t:'spawn',spawn:{anchor:peer.anchor}});}
       peer.stateAt=now;economy.observe(peer.uid,peer.s);
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.heistSentAt||0)>200){peer.heistSentAt=now;const state=economy.heistState(peer.uid);if(state||peer.hadHeist){send(peer.ws,{t:'heist',state});peer.hadHeist=!!state;}}
       if(peer.uid&&peer.ws.bufferedAmount<65536&&now-(peer.fishingSentAt||0)>150){peer.fishingSentAt=now;const state=economy.fishingState(peer.uid);if(state||peer.hadFishing){send(peer.ws,{t:'fish',state});peer.hadFishing=!!state;}}
