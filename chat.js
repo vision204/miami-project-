@@ -1,4 +1,5 @@
 // Ephemeral room chat: text lives only in memory for ten seconds, never in logs/storage unless a player explicitly reports a message.
+import {maskChat} from './chat-filter.js';
 export const CHAT_TTL = 10000;
 export class RoomChat {
   constructor(broadcast, clock = Date.now) {
@@ -21,8 +22,9 @@ export class RoomChat {
     const now = this.clock();
     if ((peer.chatUntil || 0) > now) { send({t:'chat_limit', until:peer.chatUntil, serverNow:now}); return; }
     if (typeof raw !== 'string') return;
-    const text = raw.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 200);
-    if (!text) return;
+    const original = raw.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 200);
+    if (!original) return;
+    const text = maskChat(original);
     peer.chatTimes = (peer.chatTimes || []).filter(t => t > now - CHAT_TTL);
     peer.chatTimes.push(now);
     const message = {id:++this.serial, from:peer.id, name:peer.name, text, sentAt:now, expiresAt:now + CHAT_TTL};
