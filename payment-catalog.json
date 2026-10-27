@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "mode": "test",
+  "products": [
+    {
+      "id": "cash-starter",
+      "name": "스타터",
+      "amount": 6500,
+      "units": 4000000,
+      "once": false,
+      "validityMonths": 12,
+      "items": []
+    },
+    {
+      "id": "cash-city",
+      "name": "시티",
+      "amount": 12900,
+      "units": 9000000,
+      "once": false,
+      "validityMonths": 12,
+      "items": []
+    },
+    {
+      "id": "cash-explorer",
+      "name": "익스플로러",
+      "amount": 39900,
+      "units": 30000000,
+      "once": false,
+      "validityMonths": 12,
+      "items": []
+    },
+    {
+      "id": "cash-skyline",
+      "name": "스카이라인",
+      "amount": 74900,
+      "units": 60000000,
+      "once": false,
+      "validityMonths": 12,
+      "items": []
+    },
+    {
+      "id": "cash-prestige",
+      "name": "프레스티지",
+      "amount": 149000,
+      "units": 125000000,
+      "once": false,
+      "validityMonths": 12,
+      "items": []
+    },
+    {
+      "id": "pack-starter",
+      "name": "스타터 패키지",
+      "amount": 4900,
+      "units": 6000000,
+      "once": true,
+      "validityMonths": 12,
+      "items": [
+        {
+          "k": "car",
+          "id": "ro_sinuosa",
+          "label": "ROSSANTE SINUOSA · 스포츠카",
+          "gameValue": 1700000
+        },
+        {
+          "k": "armor",
+          "id": 1,
+          "label": "표준 방탄복 1벌",
+          "gameValue": 45000
+        }
+      ]
+    },
+    {
+      "id": "pack-driver",
+      "name": "드라이버 패키지",
+      "amount": 14900,
+      "units": 18000000,
+      "once": true,
+      "validityMonths": 12,
+      "items": [
+        {
+          "k": "car",
+          "id": "hl_korona",
+          "label": "HELIOR KORONA R · 트랙 전용",
+          "gameValue": 3800000
+        },
+        {
+          "k": "box",
+          "id": "epic",
+          "quantity": 7,
+          "guaranteedTier": "epic",
+          "label": "영웅 확정 스킨 상자 7개"
+        }
+      ]
+    },
+    {
+      "id": "pack-ace",
+      "name": "에이스 패키지",
+      "amount": 39900,
+      "units": 49000000,
+      "once": true,
+      "validityMonths": 12,
+      "items": [
+        {
+          "k": "plane",
+          "id": "fighter_viper",
+          "label": "전투기",
+          "gameValue": 15000000
+        },
+        {
+          "k": "hangar",
+          "id": "hangar_starter",
+          "label": "격납고",
+          "gameValue": 2400000
+        },
+        {
+          "k": "box",
+          "id": "epic",
+          "quantity": 7,
+          "guaranteedTier": "epic",
+          "label": "영웅 확정 스킨 상자 7개"
+        },
+        {
+          "k": "box",
+          "id": "legendary",
+          "quantity": 5,
+          "guaranteedTier": "legendary",
+          "label": "전설 확정 스킨 상자 5개"
+        }
+      ]
+    },
+    {
+      "id": "pack-prestige",
+      "name": "프레스티지 패키지",
+      "amount": 92000,
+      "units": 125000000,
+      "once": true,
+      "validityMonths": 12,
+      "items": [
+        {
+          "k": "plane",
+          "id": "fighter_tempest",
+          "label": "TEMPEST X5 · 전투기",
+          "gameValue": 50000000
+        },
+        {
+          "k": "plane",
+          "id": "fighter_wraith",
+          "label": "WRAITH S4 · 수직이착륙 전투기",
+          "gameValue": 35000000
+        },
+        {
+          "k": "plane",
+          "id": "fighter_arrow",
+          "label": "ARROW I3 · 전투기",
+          "gameValue": 22000000
+        },
+        {
+          "k": "hangar",
+          "id": "hangar_prestige",
+          "label": "프레스티지 항공센터 · 5대 보관",
+          "gameValue": 60000000
+        },
+        {
+          "k": "home-choice",
+          "id": "penthouse-choice",
+          "label": "펜트하우스 1채 선택 · $700만~1000만",
+          "minPrice": 7000000,
+          "maxPrice": 10000000,
+          "gameValue": 7000000
+        },
+        {
+          "k": "boat",
+          "id": "bt_yacht",
+          "label": "AZURE 80 · 최고급 요트",
+          "gameValue": 3000000
+        },
+        {
+          "k": "car",
+          "id": "jb_vortex",
+          "label": "VORTEX GX · 비행 전투 바이크",
+          "gameValue": 3500000
+        },
+        {
+          "k": "box",
+          "id": "epic",
+          "quantity": 7,
+          "guaranteedTier": "epic",
+          "label": "영웅 확정 스킨 상자 7개"
+        },
+        {
+          "k": "box",
+          "id": "legendary",
+          "quantity": 5,
+          "guaranteedTier": "legendary",
+          "label": "전설 확정 스킨 상자 5개"
+        }
+      ]
+    }
+  ]
+}

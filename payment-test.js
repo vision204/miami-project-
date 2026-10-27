@@ -2,15 +2,11 @@
 import {createHash} from 'node:crypto';
 import {EconomyError} from './economy-engine.js';
 import {PaymentRefunds} from './payment-refunds.js';
+import fs from 'node:fs';
+import {paymentExpiresAt,availableGrant} from './payment-validity.js';
 const digest=s=>createHash('sha256').update(s).digest('hex');
 const fail=(code,status=400)=>{throw new EconomyError(code,'테스트 결제 요청을 확인해 주세요. ('+code+')',status);};
-export const TEST_PRODUCTS=Object.freeze([
- {id:'cash-starter',name:'스타터',amount:6500,units:4000000},
- {id:'cash-city',name:'시티',amount:12900,units:9000000},
- {id:'cash-explorer',name:'익스플로러',amount:39900,units:30000000},
- {id:'cash-skyline',name:'스카이라인',amount:74900,units:60000000},
- {id:'cash-prestige',name:'프레스티지',amount:149000,units:125000000}
-]);
+export const TEST_PRODUCTS=Object.freeze(JSON.parse(fs.readFileSync(new URL('./payment-catalog.json',import.meta.url))).products.map(p=>Object.freeze(p)));
 export function testConfiguration(env=process.env){
  const secret=env.TOSS_TEST_SECRET_KEY||'',client=env.TOSS_TEST_CLIENT_KEY||'';
  const users=(env.TOSS_TEST_UIDS||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -34,7 +30,7 @@ export class TestPayments{
   if(data.action==='config')return {mode:'test',clientKey:this.config.client,customerKey:digest('miami-test:'+uid).slice(0,40),products:TEST_PRODUCTS};
   if(data.action==='history'){
    const prefix=uid+':';const rows=await this.db.collection('paymentTestOrders').where('ownerPaidKey','>=',prefix).where('ownerPaidKey','<',prefix+'\uffff').orderBy('ownerPaidKey','desc').limit(20).get();
-   return {orders:rows.docs.map(d=>d.data()).filter(o=>o.uid===uid).map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,state:o.state,paidAt:o.fulfilledAt,refundedAt:o.refundedAt||null,refundState:o.refundState||null}))};
+   return {orders:rows.docs.map(d=>d.data()).filter(o=>o.uid===uid).map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,items:o.items||[],validityMonths:o.validityMonths||null,validUntil:o.validUntil||null,available:availableGrant(o),state:o.state,paidAt:o.fulfilledAt,refundedAt:o.refundedAt||null,refundState:o.refundState||null}))};
   }
   if(data.action==='refund')return {refund:await this.refunds.request(uid,data)};
   if(data.action==='refund-status')return {refund:await this.refunds.status(uid,data.orderId)};
@@ -43,7 +39,7 @@ export class TestPayments{
    const product=TEST_PRODUCTS.find(p=>p.id===data.productId);if(!product)fail('invalid-product');
    const id='test_'+digest(uid+':'+data.requestId).slice(0,48),ref=this.db.doc('paymentTestOrders/'+id);
    return this.db.runTransaction(async tx=>{const old=await tx.get(ref);if(old.exists){const o=old.data();if(o.productId!==product.id)fail('idempotency-conflict',409);const {paymentKey,...safe}=o;return safe;}
-    const order={id,uid,productId:product.id,amount:product.amount,units:product.units,name:product.name,mode:'test',state:'CREATED',createdAt:Date.now(),expiresAt:Date.now()+1800000};tx.create(ref,order);return order;});
+    const order={id,uid,productId:product.id,amount:product.amount,units:product.units,name:product.name,items:product.items,once:product.once,validityMonths:product.validityMonths,mode:'test',state:'CREATED',createdAt:Date.now(),expiresAt:Date.now()+1800000};tx.create(ref,order);return order;});
   }
   if(!/^test_[a-f0-9]{48}$/.test(data.orderId||''))fail('invalid-order');
   const ref=this.db.doc('paymentTestOrders/'+data.orderId),snap=await ref.get();
@@ -52,11 +48,13 @@ export class TestPayments{
   if(data.action!=='confirm')fail('invalid-action');
   if(['REFUND_PENDING','REFUND_REVIEW','REFUNDED'].includes(order.state))return {state:order.state,mode:'test',orderId:order.id,replayed:true};
   const key=data.paymentKey;if(typeof key!=='string'||key.length<10||key.length>250||!/^[-\w]+$/.test(key)||data.amount!==order.amount)fail('invalid-confirmation');
-  const claim=this.db.doc('paymentTestClaims/'+digest(key));
-  await this.db.runTransaction(async tx=>{const [s,c]=await Promise.all([tx.get(ref),tx.get(claim)]);const o=s.data();
+  const claim=this.db.doc('paymentTestClaims/'+digest(key)),onceRef=this.db.doc('paymentTestPackageClaims/'+digest(uid+':'+order.productId));
+  await this.db.runTransaction(async tx=>{const [s,c,once]=await Promise.all([tx.get(ref),tx.get(claim),order.once?tx.get(onceRef):Promise.resolve(null)]);const o=s.data();
    if(['REFUND_PENDING','REFUND_REVIEW','REFUNDED'].includes(o.state))return;
    if(o.paymentKey&&o.paymentKey!==key||c.exists&&c.data().orderId!==order.id)fail('payment-reused',409);
    if(!o.paymentKey&&Date.now()>o.expiresAt)fail('order-expired',409);
+   // Reserve before calling the provider: simultaneous package orders cannot both be approved.
+   if(order.once){if(once.exists&&once.data().orderId!==order.id)fail('package-already-claimed',409);if(!once.exists)tx.create(onceRef,{uid,productId:order.productId,orderId:order.id,at:Date.now()});}
    tx.set(ref,{paymentKey:key,state:o.state==='FULFILLED'?'FULFILLED':'CONFIRMING'},{merge:true});if(!c.exists)tx.create(claim,{orderId:order.id,uid});});
   // Query first so a response lost after approval can be recovered on retry.
   let payment=await this.provider(encodeURIComponent(key));
@@ -68,9 +66,10 @@ export class TestPayments{
    if(o.data().paymentKey!==key)fail('payment-mismatch',409);
    if(r.exists)return {state:o.data().state,mode:'test',orderId:order.id,replayed:true};
    if(['REFUND_PENDING','REFUND_REVIEW','REFUNDED'].includes(o.data().state))fail('refund-in-progress',409);
-   tx.set(wallet,{units:(w.data()?.units||0)+order.units,updatedAt:Date.now()});
-   tx.create(receipt,{uid,orderId:order.id,amount:order.amount,units:order.units,mode:'test',at:Date.now()});
-   const fulfilledAt=Date.now();tx.set(ref,{state:'FULFILLED',fulfilledAt,ownerPaidKey:uid+':'+String(fulfilledAt).padStart(16,'0')+':'+order.id,grant:{total:order.units,remaining:order.units,used:0,held:0}},{merge:true});
+   const fulfilledAt=Date.now(),validUntil=paymentExpiresAt(fulfilledAt,order.validityMonths||12);
+   tx.set(wallet,{...w.data(),units:(w.data()?.units||0)+order.units,updatedAt:fulfilledAt});
+   tx.create(receipt,{uid,orderId:order.id,amount:order.amount,units:order.units,items:order.items||[],validUntil,mode:'test',at:fulfilledAt});
+   tx.set(ref,{state:'FULFILLED',fulfilledAt,validUntil,ownerPaidKey:uid+':'+String(fulfilledAt).padStart(16,'0')+':'+order.id,grant:{total:order.units,remaining:order.units,used:0,held:0}},{merge:true});
    return {state:'FULFILLED',mode:'test',orderId:order.id,replayed:false};});
  }
 }
