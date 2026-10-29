@@ -4,20 +4,22 @@ import {EconomyError} from './economy-engine.js';
 import {PaymentRefunds} from './payment-refunds.js';
 import fs from 'node:fs';
 import {paymentExpiresAt,availableGrant} from './payment-validity.js';
+import {PaymentReviewGame} from './payment-review-game.js';
 const digest=s=>createHash('sha256').update(s).digest('hex');
 const fail=(code,status=400)=>{throw new EconomyError(code,'테스트 결제 요청을 확인해 주세요. ('+code+')',status);};
 export const TEST_PRODUCTS=Object.freeze(JSON.parse(fs.readFileSync(new URL('./payment-catalog.json',import.meta.url))).products.map(p=>Object.freeze(p)));
+export const MAX_PAYMENT_KRW=100000;
 export function testConfiguration(env=process.env){
  const secret=env.TOSS_TEST_SECRET_KEY||'',client=env.TOSS_TEST_CLIENT_KEY||'';
  const users=(env.TOSS_TEST_UIDS||'').split(',').map(s=>s.trim()).filter(Boolean);
  const enabled=env.TOSS_TEST_ENABLED==='1'&&/^test_gsk_/.test(secret)&&/^test_gck_/.test(client)&&users.length>0;
- return {enabled,secret,client,users};
+ return {enabled,secret,client,users,gameEnabled:env.TOSS_TEST_GAME_ENABLED==='1'};
 }
 export function verifyPayment(payment,order,key){
  if(payment?.orderId!==order.id||payment.paymentKey!==key||payment.totalAmount!==order.amount||payment.currency!=='KRW'||payment.status!=='DONE'||payment.balanceAmount!==order.amount||payment.cancels?.length)fail('payment-mismatch',409);
 }
 export class TestPayments{
- constructor(db,{config=testConfiguration(),fetcher=fetch}={}){this.db=db;this.config=config;this.fetcher=fetcher;this.refunds=new PaymentRefunds(db,(...args)=>this.provider(...args));}
+ constructor(db,{config=testConfiguration(),fetcher=fetch,catalog=null}={}){this.db=db;this.config=config;this.fetcher=fetcher;this.refunds=new PaymentRefunds(db,(...args)=>this.provider(...args));this.game=config.enabled&&config.gameEnabled?new PaymentReviewGame(db,catalog||JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url)))):null;}
  authorize(uid){if(!this.config.enabled)fail('test-payment-disabled',503);if(!this.config.users.includes(uid))fail('test-account-required',403);}
  async provider(route,body,id){
   let response;
@@ -27,7 +29,8 @@ export class TestPayments{
  }
  async execute(uid,data){
   this.authorize(uid);
-  if(data.action==='config')return {mode:'test',clientKey:this.config.client,customerKey:digest('miami-test:'+uid).slice(0,40),products:TEST_PRODUCTS};
+  if(data.action==='config')return {mode:'test',clientKey:this.config.client,customerKey:digest('miami-test:'+uid).slice(0,40),products:TEST_PRODUCTS,reviewGame:{enabled:!!this.game,moneyOnly:true}};
+  if(data.action==='game'){if(!this.game)fail('test-game-disabled',403);return this.game.execute(uid,data.request);}
   if(data.action==='history'){
    const prefix=uid+':';const rows=await this.db.collection('paymentTestOrders').where('ownerPaidKey','>=',prefix).where('ownerPaidKey','<',prefix+'\uffff').orderBy('ownerPaidKey','desc').limit(20).get();
    return {orders:rows.docs.map(d=>d.data()).filter(o=>o.uid===uid).map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,items:o.items||[],validityMonths:o.validityMonths||null,validUntil:o.validUntil||null,available:availableGrant(o),state:o.state,paidAt:o.fulfilledAt,refundedAt:o.refundedAt||null,refundState:o.refundState||null}))};
@@ -37,8 +40,9 @@ export class TestPayments{
   if(data.action==='create'){
    if(!/^[\w-]{16,80}$/.test(data.requestId||''))fail('invalid-request-id');
    const product=TEST_PRODUCTS.find(p=>p.id===data.productId);if(!product)fail('invalid-product');
+   if(!Number.isSafeInteger(product.amount)||product.amount<=0||product.amount>MAX_PAYMENT_KRW)fail('single-payment-limit');
    const id='test_'+digest(uid+':'+data.requestId).slice(0,48),ref=this.db.doc('paymentTestOrders/'+id);
-   return this.db.runTransaction(async tx=>{const old=await tx.get(ref);if(old.exists){const o=old.data();if(o.productId!==product.id)fail('idempotency-conflict',409);const {paymentKey,...safe}=o;return safe;}
+   return this.db.runTransaction(async tx=>{const old=await tx.get(ref);if(old.exists){const o=old.data();if(o.productId!==product.id)fail('idempotency-conflict',409);if(!Number.isSafeInteger(o.amount)||o.amount<=0||o.amount>MAX_PAYMENT_KRW)fail('single-payment-limit');const {paymentKey,...safe}=o;return safe;}
     const order={id,uid,productId:product.id,amount:product.amount,units:product.units,name:product.name,items:product.items,once:product.once,validityMonths:product.validityMonths,mode:'test',state:'CREATED',createdAt:Date.now(),expiresAt:Date.now()+1800000};tx.create(ref,order);return order;});
   }
   if(!/^test_[a-f0-9]{48}$/.test(data.orderId||''))fail('invalid-order');
@@ -46,6 +50,7 @@ export class TestPayments{
   if(!snap.exists||snap.data().uid!==uid)fail('order-not-found',404);const order=snap.data();
   if(data.action==='status'){const {paymentKey,...safe}=order;return safe;}
   if(data.action!=='confirm')fail('invalid-action');
+  if(!Number.isSafeInteger(order.amount)||order.amount<=0||order.amount>MAX_PAYMENT_KRW)fail('single-payment-limit');
   if(['REFUND_PENDING','REFUND_REVIEW','REFUNDED'].includes(order.state))return {state:order.state,mode:'test',orderId:order.id,replayed:true};
   const key=data.paymentKey;if(typeof key!=='string'||key.length<10||key.length>250||!/^[-\w]+$/.test(key)||data.amount!==order.amount)fail('invalid-confirmation');
   const claim=this.db.doc('paymentTestClaims/'+digest(key)),onceRef=this.db.doc('paymentTestPackageClaims/'+digest(uid+':'+order.productId));

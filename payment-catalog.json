@@ -41,7 +41,7 @@
     {
       "id": "cash-prestige",
       "name": "프레스티지",
-      "amount": 149000,
+      "amount": 93000,
       "units": 125000000,
       "once": false,
       "validityMonths": 12,
@@ -72,7 +72,7 @@
     {
       "id": "pack-driver",
       "name": "드라이버 패키지",
-      "amount": 14900,
+      "amount": 12900,
       "units": 18000000,
       "once": true,
       "validityMonths": 12,
@@ -95,7 +95,7 @@
     {
       "id": "pack-ace",
       "name": "에이스 패키지",
-      "amount": 39900,
+      "amount": 34900,
       "units": 49000000,
       "once": true,
       "validityMonths": 12,
@@ -131,7 +131,7 @@
     {
       "id": "pack-prestige",
       "name": "프레스티지 패키지",
-      "amount": 92000,
+      "amount": 89900,
       "units": 125000000,
       "once": true,
       "validityMonths": 12,

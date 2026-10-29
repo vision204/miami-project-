@@ -23,7 +23,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
  // Test injection is accepted only by explicitly constructed local test servers, never from requests.
  let paymentTests=null;
  // Durable pending refunds resume after restart; disabling new tests must not strand holds.
- const refundTimer=setInterval(()=>{if(!available||!store?.db||!/^test_gsk_/.test(process.env.TOSS_TEST_SECRET_KEY||''))return;paymentTests??=new TestPayments(store.db);paymentTests.refunds.tick().catch(()=>{});},15000);refundTimer.unref();
+ const refundTimer=setInterval(()=>{if(!available||!store?.db||!/^test_gsk_/.test(process.env.TOSS_TEST_SECRET_KEY||''))return;paymentTests??=new TestPayments(store.db,{catalog:store.catalog});paymentTests.refunds.tick().catch(()=>{});},15000);refundTimer.unref();
  let available=!!testStore;const configured=!!store&&(enabled||!!testStore),limits=new Map(),balances=new Map();
  async function balance(uid){if(!available)return null;const cached=balances.get(uid);if(cached&&Date.now()-cached.at<60000)return cached.task||cached.value;const entry={at:Date.now(),value:null};entry.task=store.balance(uid).then(value=>{entry.value=value;delete entry.task;return value;}).catch(()=>{delete entry.task;return null;});balances.set(uid,entry);if(balances.size>10000)for(const [id,v]of balances)if(Date.now()-v.at>60000)balances.delete(id);return entry.task;}
  if(configured&&!testStore){const check=async()=>{try{available=(await store.db.doc('economyControl/config').get()).data()?.lockedVersion===1;}catch{available=false;}};check();setInterval(check,30000).unref();}
@@ -46,7 +46,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
    if(!String(req.headers['content-type']||'').startsWith('application/json'))throw new EconomyError('invalid-content-type','JSON 요청이 필요합니다.',415);
    let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>850000)throw new EconomyError('payload-too-large','요청이 너무 큽니다.',413);chunks.push(chunk);}
    let data;try{data=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new EconomyError('invalid-json','요청 형식을 확인해 주세요.');}
-   if(req.url==='/economy/payment-test'){paymentTests??=new TestPayments(store.db);const result=await paymentTests.execute(uid,data);send(res,200,{ok:true,...result});return true;}
+   if(req.url==='/economy/payment-test'){paymentTests??=new TestPayments(store.db,{catalog:store.catalog});const result=await paymentTests.execute(uid,data);send(res,200,{ok:true,...result});return true;}
    // uid, price, cash, reward fields in the body do not select identity or authority.
    if(data.type==='load'&&refreshFounders){try{await refreshFounders(uid);}catch{console.warn('[founders] Registration sync unavailable; existing entitlements remain valid.');}}
    const out=await store.execute(uid,data);securityCache.delete(uid);onAccount(uid,out.account,data.command);balances.set(uid,{at:Date.now(),value:out.account.property.cash});send(res,200,{ok:true,...out});
