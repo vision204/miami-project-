@@ -1,4 +1,7 @@
 import {TestPayments} from './payment-test.js';
+import {LivePayments,liveConfiguration} from './payment-live.js';
+import {sweepCommerce} from './payment-commerce.js';
+import {randomUUID} from 'node:crypto';
 import {ConnectionLimits} from './connection-limits.js';
 import {createFounderRefresh} from './founders.js';
 import fs from 'node:fs';
@@ -21,21 +24,24 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8'));store=new EconomyStore(db,catalog,{observe,huntProof,coupons:JSON.parse(process.env.ECONOMY_COUPONS_JSON||'{}')});tiers=new TierBoard(db,catalog);
  }catch{error='configuration-required';}}
  // Test injection is accepted only by explicitly constructed local test servers, never from requests.
- let paymentTests=null;
+ let paymentTests=null,paymentLive=null;
+ const liveReadiness=()=>{const c=liveConfiguration();return {configured:c.configured,checkoutEnabled:c.checkoutEnabled,approvalEnabled:c.approvalEnabled,publicSales:c.publicEnabled,giftEnabled:c.giftEnabled};};
+ const liveService=()=>paymentLive??=new LivePayments(store.db,{catalog:store.catalog,onAccount:(uid,account)=>{securityCache.delete(uid);balances.set(uid,{at:Date.now(),value:account.property.cash});onAccount(uid,account);}});
  // Durable pending refunds resume after restart; disabling new tests must not strand holds.
  const refundTimer=setInterval(()=>{if(!available||!store?.db||!/^test_gsk_/.test(process.env.TOSS_TEST_SECRET_KEY||''))return;paymentTests??=new TestPayments(store.db,{catalog:store.catalog});paymentTests.refunds.tick().catch(()=>{});},15000);refundTimer.unref();
+ const liveTimer=setInterval(()=>{if(available&&store?.db&&liveConfiguration().configured)liveService().tick().catch(()=>{});},15000);liveTimer.unref();
  let available=!!testStore;const configured=!!store&&(enabled||!!testStore),limits=new Map(),balances=new Map();
  async function balance(uid){if(!available)return null;const cached=balances.get(uid);if(cached&&Date.now()-cached.at<60000)return cached.task||cached.value;const entry={at:Date.now(),value:null};entry.task=store.balance(uid).then(value=>{entry.value=value;delete entry.task;return value;}).catch(()=>{delete entry.task;return null;});balances.set(uid,entry);if(balances.size>10000)for(const [id,v]of balances)if(Date.now()-v.at>60000)balances.delete(id);return entry.task;}
  if(configured&&!testStore){const check=async()=>{try{available=(await store.db.doc('economyControl/config').get()).data()?.lockedVersion===1;}catch{available=false;}};check();setInterval(check,30000).unref();}
  const securityCache=new Map(),httpIPs=new Map(),ipResolver=new ConnectionLimits();let httpInFlight=0;
- async function securityAccount(uid){if(!available||!store||!uid)return null;const old=securityCache.get(uid);if(old&&Date.now()-old.at<3000)return old.task;const task=store.db.doc('economyAccounts/'+uid).get().then(d=>d.exists?d.data():null).catch(()=>null);securityCache.set(uid,{at:Date.now(),task});if(securityCache.size>10000)for(const[k,v]of securityCache)if(Date.now()-v.at>3000)securityCache.delete(k);return task;}
+ async function securityAccount(uid){if(!available||!store||!uid)return null;const old=securityCache.get(uid);if(old&&Date.now()-old.at<3000)return old.task;const task=store.db.doc('economyAccounts/'+uid).get().then(d=>{if(!d.exists)return null;const a=d.data();if(sweepCommerce(a))onAccount(uid,a,{type:'commerce.expired'});return a;}).catch(()=>null);securityCache.set(uid,{at:Date.now(),task});if(securityCache.size>10000)for(const[k,v]of securityCache)if(Date.now()-v.at>3000)securityCache.delete(k);return task;}
  const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));};
  async function handle(req,res){
   if(!req.url?.split('?')[0].startsWith('/economy/'))return false;
   const origin=req.headers.origin;if(origin){if(!allowed.includes(origin)){send(res,403,{ok:false,code:'origin-denied'});return true;}res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
   if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','POST, GET, OPTIONS');res.writeHead(204);res.end();return true;}
-  if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,security:1,atelier:1,founders:1,airportFlights:1,golfSets:1,fishing:1,fishingCatalog:2,hunting:1,attendance:1,skinBind:1,enabled:enabled||!!testStore,configured,available,configuration:error});return true;}
-  if(!['/economy/transaction','/economy/payment-test'].includes(req.url)||req.method!=='POST'){send(res,404,{ok:false,code:'not-found'});return true;}
+  if(req.url==='/economy/status'&&req.method==='GET'){send(res,200,{protocol:1,security:1,atelier:1,founders:1,airportFlights:1,golfSets:1,fishing:1,fishingCatalog:2,hunting:1,attendance:1,skinBind:1,enabled:enabled||!!testStore,configured,available,configuration:error,paymentLive:liveReadiness()});return true;}
+  if(!['/economy/transaction','/economy/payment-test','/economy/payment-live'].includes(req.url)||req.method!=='POST'){send(res,404,{ok:false,code:'not-found'});return true;}
   if(!available){send(res,503,{ok:false,code:'economy-unavailable',message:'서버 거래 연결을 준비 중입니다.'});return true;}
   const ip=ipResolver.ip(req),time=Date.now();let bucket=httpIPs.get(ip);if(!bucket||time-bucket.at>60000)bucket={at:time,n:0};bucket.n++;httpIPs.set(ip,bucket);if(httpIPs.size>5000)for(const[k,v]of httpIPs)if(time-v.at>60000)httpIPs.delete(k);if(bucket.n>300||httpInFlight>=64){send(res,429,{ok:false,code:'rate-limit'});return true;}httpInFlight++;
   try{
@@ -47,11 +53,16 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
    let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>850000)throw new EconomyError('payload-too-large','요청이 너무 큽니다.',413);chunks.push(chunk);}
    let data;try{data=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new EconomyError('invalid-json','요청 형식을 확인해 주세요.');}
    if(req.url==='/economy/payment-test'){paymentTests??=new TestPayments(store.db,{catalog:store.catalog});const result=await paymentTests.execute(uid,data);send(res,200,{ok:true,...result});return true;}
+   if(req.url==='/economy/payment-live'){
+    const service=liveService();
+    if(data.action==='config'){service.authorizeNew(uid);const loaded=await store.execute(uid,{id:randomUUID(),type:'load'});onAccount(uid,loaded.account);}
+    const result=await service.execute(uid,data);securityCache.delete(uid);balances.delete(uid);send(res,200,{ok:true,...result});return true;
+   }
    // uid, price, cash, reward fields in the body do not select identity or authority.
    if(data.type==='load'&&refreshFounders){try{await refreshFounders(uid);}catch{console.warn('[founders] Registration sync unavailable; existing entitlements remain valid.');}}
    const out=await store.execute(uid,data);securityCache.delete(uid);onAccount(uid,out.account,data.command);balances.set(uid,{at:Date.now(),value:out.account.property.cash});send(res,200,{ok:true,...out});
   }catch(e){const known=e instanceof EconomyError;send(res,known?e.status:503,{ok:false,code:known?e.code:'storage-unavailable',message:known?e.message:'서버 저장을 완료하지 못했습니다. 같은 거래로 다시 시도해 주세요.'});}finally{httpInFlight--;}
   return true;
  }
- return {moderationBackend:()=>available&&store?.db?{db:store.db,auth}:null,tier:uid=>tiers&&(available||testTiers)?tiers.me(uid):Promise.reject(new Error('tier-unavailable')),tierCached:uid=>tiers?.cached(uid)||null,securityAccount,verifyToken:auth?async token=>{const v=await auth.verifyIdToken(token,true);return {uid:v.uid,expiresAt:v.exp*1000};}:null,fishingTick:()=>store?.fishing?.tick(),fishingState:uid=>available?store.fishing?.snapshot(uid):null,fishingAction:(uid,m)=>available?store.fishing?.action(uid,m):null,heistProtected:uid=>{const r=store?.heists?.get(uid);return !!r&&!['done','failed'].includes(r.phase);},heistTick:()=>store?.heists?.tick(),heistState:uid=>available?store.heists?.snapshot(uid):null,heistAction:(uid,m)=>available?store.heists?.action(uid,m):null,handle,status:()=>({protocol:1,security:1,atelier:1,founders:1,airportFlights:1,golfSets:1,fishing:1,fishingCatalog:2,hunting:1,attendance:1,skinBind:1,enabled:enabled||!!testStore,configured,available,configuration:error}),balance,observe:(uid,s)=>{if(available&&uid){store.missions?.observe(uid,s);store.heists?.observe(uid,s);store.fishing?.observe(uid,s);}}};
+ return {moderationBackend:()=>available&&store?.db?{db:store.db,auth}:null,tier:uid=>tiers&&(available||testTiers)?tiers.me(uid):Promise.reject(new Error('tier-unavailable')),tierCached:uid=>tiers?.cached(uid)||null,securityAccount,verifyToken:auth?async token=>{const v=await auth.verifyIdToken(token,true);return {uid:v.uid,expiresAt:v.exp*1000};}:null,fishingTick:()=>store?.fishing?.tick(),fishingState:uid=>available?store.fishing?.snapshot(uid):null,fishingAction:(uid,m)=>available?store.fishing?.action(uid,m):null,heistProtected:uid=>{const r=store?.heists?.get(uid);return !!r&&!['done','failed'].includes(r.phase);},heistTick:()=>store?.heists?.tick(),heistState:uid=>available?store.heists?.snapshot(uid):null,heistAction:(uid,m)=>available?store.heists?.action(uid,m):null,handle,status:()=>({protocol:1,security:1,atelier:1,founders:1,airportFlights:1,golfSets:1,fishing:1,fishingCatalog:2,hunting:1,attendance:1,skinBind:1,enabled:enabled||!!testStore,configured,available,configuration:error,paymentLive:liveReadiness()}),balance,observe:(uid,s)=>{if(available&&uid){store.missions?.observe(uid,s);store.heists?.observe(uid,s);store.fishing?.observe(uid,s);}}};
 }

@@ -36,7 +36,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'rail-junctions-20261030-1';
+const BUILD = 'live-payment-20261030-1';
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -102,7 +102,7 @@ const num = (v, lo, hi) => {
 /* ---------------------------------------------------------------------
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
-const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProof:(uid,id)=>combat.huntProof(uid,id),onAccount:(uid,a,cmd)=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid){p.access=a;if(!combat.init(p).armorInitialized){p.life.armor=Math.max(0,a.property?.armor||0);p.life.armorInitialized=true;}if(cmd?.type==='buy.armor'){combat.init(p).armor=a.property.armor;send(p.ws,combat.snapshot(p));}}},observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProof:(uid,id)=>combat.huntProof(uid,id),onAccount:(uid,a,cmd)=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid){const priorArmor=p.access?.property?.armor||0;p.access=a;if(!combat.init(p).armorInitialized){p.life.armor=Math.max(0,a.property?.armor||0);p.life.armorInitialized=true;}if(cmd?.type==='buy.armor'||cmd?.type==='commerce.claim'&&(a.property.armor||0)>priorArmor){combat.init(p).armor=a.property.armor;send(p.ws,combat.snapshot(p));}else if(p.life.armor>(a.property.armor||0)){p.life.armor=a.property.armor||0;send(p.ws,combat.snapshot(p));}}},observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
 const reportRepo=new FirestoreReports(()=>economy.moderationBackend()),chatReports=new ChatReports({chat,repo:reportRepo,send,peers:()=>[...rooms.values()].flatMap(r=>[...r.values()])});
 setInterval(()=>{chatReports.prune();reportRepo.cleanup().catch(()=>{});},60000).unref();
 const combat=new CombatSecurity({catalog:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url))),rules:JSON.parse(fs.readFileSync(new URL('./combat-catalog.json',import.meta.url))),account:uid=>economy.securityAccount(uid)});

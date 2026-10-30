@@ -5,6 +5,7 @@ import {MissionMonitor} from './economy-missions.js';
 import {EconomyPlanner} from './economy-planner.js';
 import{Fishing}from'./fishing.js';
 import {Heists} from './heists.js';
+import {sweepCommerce,spendCommerce,restoreCommerceSpend,validateCommerceAction,observeCommerceAction,claimCommerce} from './payment-commerce.js';
 
 export class EconomyStore {
  constructor(db,catalog,{observe=()=>null,huntProof=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.huntProof=huntProof;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});}
@@ -33,11 +34,14 @@ export class EconomyStore {
    const [control,ledger,done,legacy,founders]=await Promise.all([tx.get(controlRef),tx.get(ref),tx.get(receipt),tx.get(legacyRef),tx.get(this.db.doc(FOUNDERS_PATH))]);
    if(control.data()?.lockedVersion!==1)throw new EconomyError('cutover-required','서버 거래 전환을 준비 중입니다.',503);
    let account=ledger.exists?ledger.data():migrateAccount(legacy.exists?legacy.data():null,this.catalog);
+   const expired=sweepCommerce(account);
+   if(expired){tx.set(ref,account);tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});}
    if(done.exists){if(done.data().hash!==hash)throw new EconomyError('idempotency-conflict','이미 사용한 거래 식별자입니다.',409);return {account,result:done.data().result||{},replayed:true};}
+   if(expired&&request.type!=='load')return {account,requiresRefresh:true};
    if(request.type==='load'){
     // A relay restart or a lost race result must not strand an entry fee.
     if(account.speedRace?.expiresAt<Date.now()){
-     account.property.cash+=1000;delete account.speedRace;account.version++;account.updatedAt=Date.now();
+     restoreCommerceSpend(account,1000,account.speedRace.paidFee||[]);delete account.speedRace;account.version++;account.updatedAt=Date.now();
      tx.set(ref,account);tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});
     }
     const granted=awardFounder(account,uid,founders.data(),this.catalog);
@@ -49,10 +53,12 @@ export class EconomyStore {
    if(!ledger.exists)throw new EconomyError('load-required','계정 원장을 먼저 불러와 주세요.',409);
    if(account.speedRace&&['job.start','heist.start','fishing.start','vehicle.use'].includes(request.command?.type))throw new EconomyError('race-active','스피드레이싱을 먼저 마쳐 주세요.',409);
    if(request.version!==account.version)throw new EconomyError('version-conflict','다른 창에서 거래가 변경되었습니다. 다시 확인해 주세요.',409);
-   let out;
+   let out;validateCommerceAction(account,request.command);const before=account.commerce?structuredClone(account):null;
    if(request.type==='save')out=applyProgress(account,request.save,this.catalog);
+   else if(request.command?.type==='commerce.claim')out=claimCommerce(account,this.catalog,request.command);
    else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),fishingProof:this.fishing.proof(uid,request.command?.run),huntProof:this.huntProof(uid,request.command?.animal),coupons:this.coupons,observation:this.observe(uid)});
    account=out.account;
+   spendCommerce(account,out.result?.spent||0);if(before)observeCommerceAction(before,account,request.command);
    if(Buffer.byteLength(JSON.stringify(account))>750000)throw new EconomyError('account-too-large','계정 저장 한도를 관리자에게 확인해 주세요.',409);
    tx.set(ref,account);
    tx.create(receipt,{hash,at:Date.now(),version:account.version,result:out.result||{}});
@@ -61,6 +67,7 @@ export class EconomyStore {
    tx.set(legacyRef,{save,work:account.work||{},economyVersion:account.version,lastSeen:Date.now()},{mergeFields:['save','work','economyVersion','lastSeen']});
    return {account,result:out.result||{},replayed:false};
   });
+  if(output.requiresRefresh)throw new EconomyError('version-conflict','유료 상품의 이용기간이 변경됐어요. 잔액과 보유 목록을 다시 불러와 주세요.',409);
   if(request.command?.type==='job.start'&&output.account.work?.active)this.missions.start(uid,output.account.work.active);
   if(request.command?.type==='job.settle')this.missions.clear(uid,request.command.run);
   if(request.command?.type==='heist.start'&&output.account.heist?.active?.id===request.command.run)this.heists.start(uid,output.account.heist.active,this.observe(uid),output.account.property?.armor||0);
@@ -69,5 +76,5 @@ export class EconomyStore {
   if(request.command?.type==='fishing.settle')this.fishing.clear(uid,request.command.run);
   return output;
  }
- async balance(uid){const s=await this.db.doc('economyAccounts/'+uid).get();return s.exists?s.data().property?.cash:null;}
+ async balance(uid){const s=await this.db.doc('economyAccounts/'+uid).get();if(!s.exists)return null;const a=s.data();sweepCommerce(a);return a.property?.cash;}
 }
