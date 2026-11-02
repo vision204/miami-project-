@@ -27,6 +27,7 @@ import { WebSocketServer } from 'ws';
 import { RoomChat } from './chat.js';
 import {ChatReports,FirestoreReports} from './chat-reports.js';
 import { Sports } from './sports.js';
+import { GolfRanks } from './golf-ranks.js';   // 2026-11-02 Opus · 클럽하우스 골프 랭킹보드
 import { Friends, validUid } from './friends.js';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { createEconomyHttp } from './economy-http.js';
@@ -36,7 +37,8 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'combined-release-20261102-2';
+const BUILD = 'golf-rank-20261102-1';
+// const BUILD_PREV = 'combined-release-20261102-2';
 // const BUILD_OLD = 'basketball-pads-1';           // 2026-10-03 : compact binary snapshots (older builds: war-1)
 
 /* 접속을 허용할 출처. 비워 두면 전부 허용(로컬 개발용).
@@ -108,6 +110,7 @@ setInterval(()=>{chatReports.prune();reportRepo.cleanup().catch(()=>{});},60000)
 const combat=new CombatSecurity({catalog:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url))),rules:JSON.parse(fs.readFileSync(new URL('./combat-catalog.json',import.meta.url))),account:uid=>economy.securityAccount(uid)});
 const speedRacing=new SpeedRacing({rooms,send,broadcast,ledger:new RaceLedger(()=>economy.moderationBackend()),blocked:p=>sports.protected(p)||economy.heistProtected(p.uid)});
 setInterval(()=>speedRacing.tick(),100).unref();
+const golfRanks=new GolfRanks(()=>economy.moderationBackend(),{send});
 const bombing=new Bombing({fleet:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8')).fleet,send,broadcast,protectedPeer:p=>sports.protected(p)||economy.heistProtected(p.uid)||speedRacing.protected(p)});
 setInterval(()=>bombing.tick(rooms),50).unref();
 setInterval(()=>{economy.heistTick();economy.fishingTick();},100).unref();
@@ -118,7 +121,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, aurelisPrivacy:1, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, golfRanks:1, aurelisPrivacy:1, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -247,6 +250,8 @@ wss.on('connection', (ws, req) => {
       const state=economy.heistAction(peer.uid,m);send(peer.ws,{t:'heist',state});
     } else if (m.t === 'golf'){
       sports.receive(peer,m);
+    } else if (m.t === 'golfrank'){
+      if(peer.ready)golfRanks.receive(peer,m);
     } else if (m.t === 'boxing'){
       sports.boxing.receive(peer,m);
     } else if (m.t === 'basket'){
