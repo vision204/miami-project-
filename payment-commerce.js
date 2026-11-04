@@ -13,7 +13,7 @@ export function grantCommerce(account,order,validUntil,now=Date.now()){
  const a=account;a.commerce??={v:1,lots:{}};a.commerce.lots??={};
  if(a.commerce.lots[order.id])return false;
  if(lots(a).filter(l=>!l.expired&&!l.refunded).length>=500)fail('paid-ledger-capacity','새 구매 전 기존 구매 내역을 확인해 주세요.');
- if(!Number.isSafeInteger(order.units)||order.units<=0||!Number.isSafeInteger(a.property.cash+order.units))fail('paid-ledger-review','잔액을 확인해 주세요.',503);
+ if(!Number.isSafeInteger(order.units)||order.units<0||(order.units===0&&!list(order.items).length)||!Number.isSafeInteger(a.property.cash+order.units))fail('paid-ledger-review','잔액을 확인해 주세요.',503);
  a.property.cash+=order.units;
  a.commerce.lots[order.id]={id:order.id,productId:order.productId,paidAt:now,validUntil,total:order.units,remaining:order.units,used:0,usage:0,held:0,items:(order.items||[]).map(i=>({...i,remaining:i.quantity||1,claimed:0,grants:[]}))};
  a.version++;a.updatedAt=now;invariant(a);return true;
@@ -42,6 +42,8 @@ function releaseItems(a,l){
   if(g.home&&!g.existing){p.homes=list(p.homes).filter(id=>id!==g.home);a.commerce.expiredHomes??=[];add(a.commerce,'expiredHomes',g.home);if(p.spawn===g.home)delete p.spawn;}
   if(g.hangar&&!g.existing){if(!lots(a).some(other=>other.id!==l.id&&active(other)&&other.items.some(it=>it.grants.some(x=>x.hangar===g.hangar&&!x.existing)))){p.hangars.owned=list(p.hangars?.owned).filter(id=>id!==g.hangar);a.commerce.expiredHangars??=[];add(a.commerce,'expiredHangars',g.hangar);}}
   if(g.armor&&g.expireArmor!==false)p.armor=Math.min(p.armor||0,g.previousArmor||0);
+  // 패키지로 받은 총 (2026-11-04 BREACH) : 원래 가진 총이 아니고, 다른 유효 구매가 같은 총을 주지 않았을 때만 회수. 파츠 기록(gunmods)은 남겨 둔다.
+  if(g.gun&&!g.existing&&!lots(a).some(other=>other.id!==l.id&&active(other)&&other.items.some(it=>it.grants.some(x=>x.gun===g.gun&&!x.existing))))p.guns=list(p.guns).filter(id=>id!==g.gun);
   if(g.skin){const sk=skinsV2(p);sk.stock[g.skin]=Math.max(0,(sk.stock[g.skin]||0)-(g.stock||0));if(!sk.stock[g.skin])delete sk.stock[g.skin];for(const w of g.equipped||[])if(sk.eq[w]===g.skin)delete sk.eq[w];if(!sk.stock[g.skin]&&!Object.values(sk.eq).includes(g.skin))sk.inv=list(sk.inv).filter(id=>id!==g.skin);}
  }
  for(const slot of assetSlots(p))if(slot.r.paidOrder===l.id)slot.remove();
@@ -101,7 +103,7 @@ export function claimCommerce(a,catalog,cmd,{now=Date.now(),uuid=randomUUID,roll
  const p=a.property;let g={};
  if(['car','plane','boat'].includes(i.k)){
   const K=catalog.vehicles.find(k=>k.id===i.id&&k.type===i.k);if(!K)fail('paid-item-review','구성품을 확인해야 합니다.',503);
-  const r={a:uuid(),k:K.id,p:0,c:K.paint??0xffffff,paidOrder:l.id,validUntil:l.validUntil};if(K.fuel)r.f=K.fuel.capacity;
+  const r={a:uuid(),k:K.id,p:0,c:Number.isInteger(i.paint)&&i.paint>=0&&i.paint<=0xffffff?i.paint:(K.paint??0xffffff),paidOrder:l.id,validUntil:l.validUntil};   // i.paint : 패키지가 정한 색 (BREACH 검정, 2026-11-04)if(K.fuel)r.f=K.fuel.capacity;
   if(i.k==='car'){p.over??=[];if(p.over.length>=200)fail('capacity','차량 보관함을 정리해 주세요.');p.over.push(r);}
   if(i.k==='plane'){
    const h=catalog.hangars.find(h=>owns(p.hangars?.owned,h.id)&&(list(p.hangars?.planes?.[h.id]).length<h.slots));
@@ -115,6 +117,9 @@ export function claimCommerce(a,catalog,cmd,{now=Date.now(),uuid=randomUUID,roll
  }else if(i.k==='home-choice'){
   const h=catalog.homes.find(h=>h.id===cmd.homeId&&/-penthouse-/.test(h.id)&&h.price>=i.minPrice&&h.price<=i.maxPrice);if(!h||owns(p.homes,h.id))fail('paid-home-choice','가격 범위 안의 미소유 펜트하우스를 골라 주세요.');
   g={home:h.id,existing:false};add(p,'homes',h.id);p.cars??={};p.cars[h.id]??=[];p.designs??={};p.designs[h.id]??='coastal';p.spawn??=h.id;
+ }else if(i.k==='gun'){
+  const w=list(catalog.guns).find(w=>w.id===i.id);if(!w||w.id==='fists')fail('paid-item-review','총 구성품을 확인해야 합니다.',503);
+  g={gun:w.id,existing:owns(p.guns,w.id)};add(p,'guns',w.id);
  }else if(i.k==='armor'){
   const armor=catalog.armor[i.id];if(!armor||(p.armor||0)>=armor.v)fail('paid-armor-unavailable','현재 방탄복을 사용한 뒤 구성품을 받을 수 있어요.');g={armor:armor.v,previousArmor:p.armor||0,expireArmor:true};p.armor=armor.v;
  }else if(i.k==='box'){

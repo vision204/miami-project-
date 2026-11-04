@@ -5,6 +5,7 @@ import{RODS,DOCKS,zoneAt,rollFish,fishById,payout}from'./fishing-catalog.js';
 import {GOLF_SETS} from './golf-items.js';
 import{RESPAWN_MS as HUNT_RESPAWN,parseAnimal,speciesById}from'./hunting-catalog.js';
 import {AIRPORTS_LAYOUT,airportTerminal,airportDestination} from './airport-layout.js';
+import {taxiCommand} from './leisure-taxi.js';
 
 export class EconomyError extends Error {
   constructor(code, message, status=400){super(message);this.code=code;this.status=status;}
@@ -76,9 +77,13 @@ export function tuningCost(o,n,P){let v=0;const a=o.t||{},b=n.t||{};if(n.c!==o.c
 // The server accepts intents, never client totals, cash, ownership lists or paid prices.
 export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,huntProof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
  if(!account||account.schema!==1)fail('invalid-account','계정 원장을 불러올 수 없습니다.',503);
- const s=copy(account),p=s.property;let spent=0,result={},flightSave=null;
+ const s=copy(account),p=s.property;let spent=0,result={},flightSave=null,taxiPosition=null;
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
+ if(s.cityTaxi?.pending&&['flight.board','job.start','heist.start','fishing.start','vehicle.use'].includes(cmd.type))fail('taxi-pending','택시 도착을 먼저 확인해 주세요.',409);
  switch(cmd.type){
+ case 'taxi.ride':case 'taxi.arrive':{
+  const t=taxiCommand(s,cmd,{now,observation,charge,fail});spent=t.spent;result={taxi:t.taxi};taxiPosition=t.position;break;
+ }
  case 'flight.board':{
   const t=airportTerminal(cmd.from),to=airportDestination(cmd.from),o=observation;
   if(!t||!to||typeof cmd.pass!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.pass))fail('flight-route','항공편을 확인해 주세요.');
@@ -188,7 +193,7 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
  case 'buy.fuel':{const a=asset(p,cmd.asset),K=entry(catalog.vehicles,a.r.k);if(!K.fuel)fail('unknown-item','주유할 수 없는 차량입니다.');const have=Number.isFinite(a.r.f)?a.r.f:K.fuel.capacity,amount=cmd.amount==='full'?K.fuel.capacity:cmd.amount;if(!Number.isFinite(amount)||amount<0)fail('invalid-fuel','주유량을 확인해 주세요.');const liters=Math.min(K.fuel.capacity-have,amount);spent=charge(s,Math.round(liters*20));a.r.f=have+liters;result={liters,cost:spent,capacity:K.fuel.capacity};break;}
  default:fail('unsupported-command','서버에서 지원하지 않는 거래입니다.');
  }
- s.version++;s.updatedAt=now;return {account:s,result:{...result,spent},...(flightSave?{save:flightSave}:{})};
+ s.version++;s.updatedAt=now;return {account:s,result:{...result,spent},...(flightSave?{save:flightSave}:{}),...(taxiPosition?{position:taxiPosition}:{})};
 }
 
 // Saves may move existing assets between owned garages and consume fuel/armor;
@@ -216,6 +221,7 @@ export function applyProgress(account,proposal,catalog,now=Date.now()){
  const save={property:p};for(const k of ['x','y','z','yaw'])if(Number.isFinite(proposal?.[k])&&Math.abs(proposal[k])<=100000)save[k]=proposal[k];
  // A delayed departure autosave must never undo an already paid flight on reload.
  if(s.flight?.pending)Object.assign(save,s.flight.arrival);
+ if(s.cityTaxi?.pending)Object.assign(save,s.cityTaxi.arrival);
  if(typeof proposal?.tod==='string')save.tod=proposal.tod.slice(0,20);
  // Ammo/health/physics remain outside this economy boundary, but weapon ownership is authoritative.
  return {account:s,save};

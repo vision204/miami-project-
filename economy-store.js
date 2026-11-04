@@ -63,6 +63,7 @@ export class EconomyStore {
    tx.set(ref,account);
    tx.create(receipt,{hash,at:Date.now(),version:account.version,result:out.result||{}});
    const save=out.save||{...(legacy.data()?.save||{}),property:account.property};
+   if(out.position)Object.assign(save,out.position);
    // Keep the old document as a read-compatible projection. Clients cannot write this field.
    tx.set(legacyRef,{save,work:account.work||{},economyVersion:account.version,lastSeen:Date.now()},{mergeFields:['save','work','economyVersion','lastSeen']});
    return {account,result:out.result||{},replayed:false};

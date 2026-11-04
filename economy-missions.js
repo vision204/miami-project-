@@ -1,14 +1,14 @@
-import {nearestJobNode,jobPath,pathLength,routeGoals,AIR_JOB_ROUTE,JOB_ROUTE_LENGTH,sizedJobPath} from './economy-job-routes.js';
+import {nearestJobNode,jobPath,pathLength,routeGoals,airJobRoute,freightBay,JOB_ROUTE_LENGTH,sizedJobPath} from './economy-job-routes.js';
 import {EconomyError} from './economy-engine.js';
 const graphs=new WeakMap();
 function graph(c){if(graphs.has(c))return graphs.get(c);const nodes=c.roads.map(n=>({p:n.p,y:n.y,g:n.g,edges:[]}));c.roads.forEach((n,i)=>{nodes[i].edges=n.edges.filter(e=>nodes[e.to]).map(e=>({na:nodes[i],nb:nodes[e.to],len:e.len,w:e.w}));});graphs.set(c,nodes);return nodes;}
 export function missionPlan(type,selection,catalog,position,seed=0){
- if(type==='air'){const goals=AIR_JOB_ROUTE.map(g=>({...g,y:g.stop?3:g.y}));let length=0;goals.forEach((g,i)=>{if(i)length+=Math.hypot(g.x-goals[i-1].x,g.z-goals[i-1].z);});return {goals,length};}
+ if(type==='air'){const goals=airJobRoute(selection?.run).map(g=>({...g,y:g.stop?3:g.y}));let length=0;goals.forEach((g,i)=>{if(i)length+=Math.hypot(g.x-goals[i-1].x,g.z-goals[i-1].z);});return {goals,length};}
  const nodes=graph(catalog),valid=n=>n.g!==false&&n.edges.some(e=>e.w>=7),at=n=>({x:n.p[0],y:n.y,z:n.p[1]});
  if(type==='freight'){
   const sites=catalog.freight,from=sites.find(s=>s.id===selection.from),to=sites.find(s=>s.id===selection.to&&s!==from);if(!from||!to)throw new EconomyError('invalid-route','물류 출발지와 도착지를 선택해 주세요.');
   const a=nearestJobNode(nodes,...from.entry,valid),b=nearestJobNode(nodes,...to.entry,valid);let path;try{path=jobPath(a,b,7);}catch{path=jobPath(a,b,5);}
-  const point=s=>({x:s.x-15*Math.sin(s.rot),y:s.y,z:s.z+15*Math.cos(s.rot)}),pickup=point(from),drop=point(to),line=[{p:[pickup.x,pickup.z],y:pickup.y},...path,{p:[drop.x,drop.z],y:drop.y}];
+  const point=(s,dx)=>({x:s.x+dx*Math.cos(s.rot)-15*Math.sin(s.rot),y:s.y,z:s.z+dx*Math.sin(s.rot)+15*Math.cos(s.rot)}),pickup=point(from,freightBay(selection.run,1)),drop=point(to,freightBay(selection.run,2)),line=[{p:[pickup.x,pickup.z],y:pickup.y},...path,{p:[drop.x,drop.z],y:drop.y}];
   return {from:from.id,to:to.id,spawn:pickup,face:{x:from.entry[0],z:from.entry[1]},path:line.map(n=>({p:n.p,y:n.y})),length:pathLength(line),goals:[{...pickup,radius:8,stop:true,pickup:true,label:from.name+' · 화물 적재'},{...drop,radius:8,stop:true,dropoff:true,label:to.name+' · 화물 하역'}]};
  }
  const course=Number.isInteger(selection.course)?Math.max(0,Math.min(2,selection.course)):0,anchors=[[-450,-400],[700,1300],[-5400,-2300]],origin=type==='race'?anchors[course]:[position.x,position.z];

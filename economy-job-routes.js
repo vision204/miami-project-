@@ -23,16 +23,28 @@ export function routeGoals(path,type){
  }
  return goals;
 }
-export const AIR_JOB_ROUTE=[
- {x:-4180,z:-1080,y:0,label:'MIA 화물 적재 — 정차 후 F',stop:true},
- {x:-6400,z:-1080,y:320,label:'서쪽 상승 구간',air:true,radius:140},
- {x:-6500,z:2600,y:450,label:'서부 화물 항로',air:true,radius:140},
- {x:-1000,z:3500,y:450,label:'남부 항로',air:true,radius:140},
- {x:600,z:-2500,y:500,label:'동부 항로',air:true,radius:140},
- {x:-4400,z:-4500,y:350,label:'OPA 접근 준비',air:true,radius:140},
- {x:-4100,z:-3980,y:90,label:'활주로 정렬 · 감속/하강',air:true,radius:120},
- {x:-2700,z:-3980,y:0,label:'OPA 활주로 착륙 · 정차 후 F',stop:true,radius:80},
+/* 2026-11-04 (Opus) : 여러 사람이 같은 곳에서 같은 길로 시작하지 않게 — 항공 화물은 출발 공항 · 활주로 · 항로 6가지, 물류는 상하차 베이 4곳.
+   고르는 기준은 업무 번호(run id). 브라우저와 서버가 같은 번호로 같은 변형을 고른다(이 파일은 server/economy-job-routes.js 와 똑같다). */
+export function jobVariant(id,n,salt=0){let h=2166136261^salt;for(const ch of String(id||''))h=Math.imul(h^ch.charCodeAt(0),16777619);h^=h>>>13;h=Math.imul(h,1540483477);h^=h>>>15;return (h>>>0)%n;}
+const AIR_POINT=(x,z,y,label,o={})=>({x,z,y,label,...o});
+const AIR_UP=(x,z,y,label)=>AIR_POINT(x,z,y,label,{air:true,radius:140});
+const AIR_LAND=(x,z,y,label)=>AIR_POINT(x,z,y,label,{air:true,radius:120});
+const AIR_STOP=(x,z,label,radius)=>AIR_POINT(x,z,0,label,radius?{stop:true,radius}:{stop:true});
+const AIR_ROUTES=[
+ {jit:0,pts:[AIR_STOP(-4180,-1080,'MIA 화물 적재 — 정차 후 F'),AIR_UP(-6400,-1080,320,'서쪽 상승 구간'),AIR_UP(-6500,2600,450,'서부 화물 항로'),AIR_UP(-1000,3500,450,'남부 항로'),AIR_UP(600,-2500,500,'동부 항로'),AIR_UP(-4400,-4500,350,'OPA 접근 준비'),AIR_LAND(-4100,-3980,90,'활주로 정렬 · 감속/하강'),AIR_STOP(-2700,-3980,'OPA 활주로 착륙 · 정차 후 F',80)]},
+ {jit:10,pts:[AIR_STOP(-4150,-875,'MIA 09L 화물 적재 — 정차 후 F'),AIR_UP(-1600,-875,300,'동쪽 상승 구간'),AIR_UP(1200,-1800,450,'해안 항로'),AIR_UP(1400,-4600,450,'북동 항로'),AIR_UP(-1500,-5200,420,'북부 항로'),AIR_UP(-5800,-4900,350,'OPA 접근 준비'),AIR_LAND(-4100,-3980,90,'활주로 정렬 · 감속/하강'),AIR_STOP(-2700,-3980,'OPA 활주로 착륙 · 정차 후 F',80)]},
+ {jit:10,pts:[AIR_STOP(-4150,-510,'MIA 09C 화물 적재 — 정차 후 F'),AIR_UP(-6300,-510,320,'서쪽 상승 구간'),AIR_UP(-6800,3000,450,'서부 화물 항로'),AIR_UP(-2600,4000,450,'남부 항로'),AIR_UP(-200,1000,480,'도심 상공 항로'),AIR_UP(-5200,-2600,400,'OPA 접근 준비'),AIR_LAND(-4100,-3980,90,'활주로 정렬 · 감속/하강'),AIR_STOP(-2700,-3980,'OPA 활주로 착륙 · 정차 후 F',80)]},
+ {jit:10,pts:[AIR_STOP(-4150,-350,'MIA 09R 화물 적재 — 정차 후 F'),AIR_UP(-1500,-350,320,'동쪽 상승 구간'),AIR_UP(800,2400,450,'남동 항로'),AIR_UP(-3500,3800,450,'남부 항로'),AIR_UP(-6800,1200,450,'서부 화물 항로'),AIR_UP(-6200,-3200,350,'OPA 접근 준비'),AIR_LAND(-4100,-3980,90,'활주로 정렬 · 감속/하강'),AIR_STOP(-2700,-3980,'OPA 활주로 착륙 · 정차 후 F',80)]},
+ {jit:8,pts:[AIR_STOP(-3950,-3980,'OPA 화물 적재 — 정차 후 F'),AIR_UP(-1400,-3980,300,'동쪽 상승 구간'),AIR_UP(1000,-1600,450,'해안 항로'),AIR_UP(400,2600,450,'남동 항로'),AIR_UP(-4800,3400,450,'남부 항로'),AIR_UP(-6900,600,400,'MIA 접근 준비'),AIR_LAND(-5600,-875,110,'09L 활주로 정렬 · 감속/하강'),AIR_STOP(-3300,-875,'MIA 09L 착륙 · 정차 후 F',80)]},
+ {jit:8,pts:[AIR_STOP(-3600,-3980,'OPA 동쪽 화물 적재 — 정차 후 F'),AIR_UP(-1200,-4900,350,'북동 상승 구간'),AIR_UP(1300,-900,480,'해안 항로'),AIR_UP(-1200,3300,450,'남부 항로'),AIR_UP(-6200,2200,420,'서부 화물 항로'),AIR_UP(-6900,-510,300,'MIA 접근 준비'),AIR_LAND(-5600,-510,110,'09C 활주로 정렬 · 감속/하강'),AIR_STOP(-3300,-510,'MIA 09C 착륙 · 정차 후 F',80)]},
 ];
+export const AIR_JOB_ROUTE=AIR_ROUTES[0].pts;   // 예전 이름 (기본 항로)
+export const AIR_ROUTE_COUNT=AIR_ROUTES.length;
+/** 업무 번호마다 정해지는 항공 화물 항로 — 출발 지점은 활주로 폭 안에서 조금씩 옆으로 비켜 선다 */
+export function airJobRoute(id){const R=AIR_ROUTES[jobVariant(id,AIR_ROUTES.length)],off=R.jit?(jobVariant(id,21,7)-10)/10*R.jit:0;return R.pts.map((p,k)=>k===0?{...p,z:p.z+off}:{...p});}
+/** 물류창고 상하차 베이 (터미널 로컬 x · 적재 도크 앞 15 m) */
+export const FREIGHT_BAYS=Object.freeze([-24,-8,8,24]);
+export function freightBay(id,salt){return FREIGHT_BAYS[jobVariant(id,FREIGHT_BAYS.length,salt)];}
 
 // 2026-10-18 : 배달 · 택시는 도로 길이로 거리를 맞춘다 (배달 약 1.25 km ≈ 밴으로 1분 · 택시 약 3.6 km ≈ 택시로 2.5분)
 export const JOB_ROUTE_LENGTH=Object.freeze({delivery:1250,taxi:3600});

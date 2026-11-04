@@ -195,6 +195,59 @@
           "label": "전설 확정 스킨 상자 5개"
         }
       ]
+    },
+    {
+      "id": "pack-breach",
+      "name": "BREACH 번들",
+      "amount": 3500,
+      "units": 0,
+      "once": true,
+      "validityMonths": 12,
+      "items": [
+        {
+          "k": "gun",
+          "id": "rail",
+          "label": "PHANTOM RAIL · 벽 관통 레일건",
+          "gameValue": 2000000
+        },
+        {
+          "k": "car",
+          "id": "ar_raid",
+          "label": "DUNE LANCER · 방탄 레이드 인터셉터 · 검정",
+          "gameValue": 69000,
+          "paint": 1316378
+        }
+      ]
+    },
+    {
+      "id": "pack-breach-x",
+      "name": "BREACH X 번들",
+      "amount": 4500,
+      "units": 0,
+      "once": true,
+      "validityMonths": 12,
+      "items": [
+        {
+          "k": "gun",
+          "id": "rail",
+          "label": "PHANTOM RAIL · 벽 관통 레일건",
+          "gameValue": 2000000
+        },
+        {
+          "k": "car",
+          "id": "ar_raid",
+          "label": "DUNE LANCER · 방탄 레이드 인터셉터 · 검정",
+          "gameValue": 69000,
+          "paint": 1316378
+        },
+        {
+          "k": "car",
+          "id": "night_bat_x1",
+          "label": "NIGHT BAT X-1 · 제트엔진 장갑차 · 검정",
+          "gameValue": 10000000,
+          "paint": 1316378
+        }
+      ]
     }
   ]
 }
