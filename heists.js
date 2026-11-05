@@ -17,9 +17,9 @@ function guardOf(i,[x,z,yaw]){return {id:i,x,z,yaw,hp:100,homeX:x,homeZ:z,homeYa
 function newCode(){return Array.from({length:4},()=>randomInt(3));}
 export class Heists{
  constructor({clock=Date.now,capacity=24,fleet=[],random=RNG}={}){this.clock=clock;this.capacity=capacity;this.fleet=fleet;this.random=random;this.runs=new Map();this.reservations=new Map();}
- reserve(uid){if(this.runs.has(uid))return;if(!this.reservations.has(uid)&&this.runs.size+this.reservations.size>=this.capacity)throw Error('습격 서버가 혼잡합니다. 잠시 후 다시 시도하세요.');this.reservations.set(uid,(this.reservations.get(uid)||0)+1);}
+ reserve(uid){if(this.runs.has(uid))return;if(!this.reservations.has(uid)&&this.runs.size+this.reservations.size>=this.capacity)throw Error('지금은 혼잡해요. 잠시 후 다시 시도해 주세요.');this.reservations.set(uid,(this.reservations.get(uid)||0)+1);}
  release(uid){const n=this.reservations.get(uid)||0;if(n>1)this.reservations.set(uid,n-1);else this.reservations.delete(uid);}
- start(uid,a,position=null,armor=0){if(this.runs.get(uid)?.id===a.id)return;const now=this.clock();for(const [k,r]of this.runs)if(now-r.at>1800000)this.runs.delete(k);if(this.runs.size>=this.capacity)throw Error('습격 서버가 혼잡합니다. 잠시 후 다시 시도하세요.');
+ start(uid,a,position=null,armor=0){if(this.runs.get(uid)?.id===a.id)return;const now=this.clock();for(const [k,r]of this.runs)if(now-r.at>1800000)this.runs.delete(k);if(this.runs.size>=this.capacity)throw Error('지금은 혼잡해요. 잠시 후 다시 시도해 주세요.');
   this.runs.set(uid,{id:a.id,at:now,began:now,phase:'infiltrate',hp:100,armor:Math.max(0,Math.min(150,Math.floor(Number(armor)||0))),ammo:30,reloadAt:0,shotAt:0,alarm:false,invalid:false,bonus:false,seq:0,budget:3,speed:0,offAt:0,reinforced:false,
    p:{x:position?.x??TIDE.start[0],y:TIDE.y,z:position?.z??TIDE.start[1],car:false,at:now},guards:TIDE.guards.map((g,i)=>guardOf(i,g)),code:newCode()});}
  get(uid,id){const r=this.runs.get(uid);return r&&(!id||r.id===id)?r:null;}

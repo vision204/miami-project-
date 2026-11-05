@@ -12,7 +12,7 @@ import {EconomyStore} from './economy-store.js';
 import {EconomyError} from './economy-engine.js';
 import {TierBoard} from './tiers.js';
 
-export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=null,testVerify=null,testTiers=null,observe=()=>null,huntProof=()=>null,onAccount=()=>{}}={}){
+export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=null,testVerify=null,testTiers=null,observe=()=>null,huntProof=()=>null,cueProof=()=>null,onAccount=()=>{}}={}){
  let store=testStore,auth=null,error=null,refreshFounders=null,tiers=testTiers;const enabled=process.env.ECONOMY_ENABLED==='1';
  if(enabled&&!store){try{
   if(process.env.MIAMI_TEST_AUTH==='1'||process.env.FIRESTORE_EMULATOR_HOST||process.env.FIREBASE_AUTH_EMULATOR_HOST)throw Error('test authentication is forbidden for the production economy');
@@ -21,7 +21,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
   const credentials=raw?JSON.parse(raw):null;if(credentials&&credentials.project_id!==projectId)throw Error('project mismatch');
   const app=initializeApp({projectId,credential:credentials?cert(credentials):applicationDefault()},'economy');
   auth=getAuth(app);const db=getFirestore(app);db.settings({ignoreUndefinedProperties:true});refreshFounders=createFounderRefresh(auth,db);
-  const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8'));store=new EconomyStore(db,catalog,{observe,huntProof,coupons:JSON.parse(process.env.ECONOMY_COUPONS_JSON||'{}')});tiers=new TierBoard(db,catalog);
+  const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url),'utf8'));store=new EconomyStore(db,catalog,{observe,huntProof,cueProof,coupons:JSON.parse(process.env.ECONOMY_COUPONS_JSON||'{}')});tiers=new TierBoard(db,catalog);
  }catch{error='configuration-required';}}
  // Test injection is accepted only by explicitly constructed local test servers, never from requests.
  let paymentTests=null,paymentLive=null;
@@ -48,9 +48,9 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
    const token=/^Bearer (\S+)$/.exec(req.headers.authorization||'')?.[1];if(!token)throw new EconomyError('unauthorized','로그인이 필요합니다.',401);
    let uid;try{uid=testVerify?await testVerify(token):(await auth.verifyIdToken(token,true)).uid;}catch{throw new EconomyError('unauthorized','로그인을 다시 확인해 주세요.',401);}
    if(!uid)throw new EconomyError('unauthorized','로그인이 필요합니다.',401);
-   const at=Date.now(),l=limits.get(uid);if(l&&at-l.at<60000&&l.n>=120)throw new EconomyError('rate-limit','거래 요청이 너무 빠릅니다.',429);limits.set(uid,l&&at-l.at<60000?{at:l.at,n:l.n+1}:{at,n:1});if(limits.size>10000)for(const [id,r]of limits)if(at-r.at>60000)limits.delete(id);
+   const at=Date.now(),l=limits.get(uid);if(l&&at-l.at<60000&&l.n>=120)throw new EconomyError('rate-limit','잠시 후 다시 시도해 주세요.',429);limits.set(uid,l&&at-l.at<60000?{at:l.at,n:l.n+1}:{at,n:1});if(limits.size>10000)for(const [id,r]of limits)if(at-r.at>60000)limits.delete(id);
    if(!String(req.headers['content-type']||'').startsWith('application/json'))throw new EconomyError('invalid-content-type','JSON 요청이 필요합니다.',415);
-   let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>850000)throw new EconomyError('payload-too-large','요청이 너무 큽니다.',413);chunks.push(chunk);}
+   let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>850000)throw new EconomyError('payload-too-large','요청을 처리할 수 없어요.',413);chunks.push(chunk);}
    let data;try{data=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new EconomyError('invalid-json','요청 형식을 확인해 주세요.');}
    if(req.url==='/economy/payment-test'){paymentTests??=new TestPayments(store.db,{catalog:store.catalog});const result=await paymentTests.execute(uid,data);send(res,200,{ok:true,...result});return true;}
    if(req.url==='/economy/payment-live'){
@@ -61,7 +61,7 @@ export function createEconomyHttp({allowed=[],projectId='smm2-505da',testStore=n
    // uid, price, cash, reward fields in the body do not select identity or authority.
    if(data.type==='load'&&refreshFounders){try{await refreshFounders(uid);}catch{console.warn('[founders] Registration sync unavailable; existing entitlements remain valid.');}}
    const out=await store.execute(uid,data);securityCache.delete(uid);onAccount(uid,out.account,data.command);balances.set(uid,{at:Date.now(),value:out.account.property.cash});send(res,200,{ok:true,...out});
-  }catch(e){const known=e instanceof EconomyError;send(res,known?e.status:503,{ok:false,code:known?e.code:'storage-unavailable',message:known?e.message:'서버 저장을 완료하지 못했습니다. 같은 거래로 다시 시도해 주세요.'});}finally{httpInFlight--;}
+  }catch(e){const known=e instanceof EconomyError;send(res,known?e.status:503,{ok:false,code:known?e.code:'storage-unavailable',message:known?e.message:'저장을 완료하지 못했어요. 다시 시도해 주세요.'});}finally{httpInFlight--;}
   return true;
  }
  return {moderationBackend:()=>available&&store?.db?{db:store.db,auth}:null,tier:uid=>tiers&&(available||testTiers)?tiers.me(uid):Promise.reject(new Error('tier-unavailable')),tierCached:uid=>tiers?.cached(uid)||null,securityAccount,verifyToken:auth?async token=>{const v=await auth.verifyIdToken(token,true);return {uid:v.uid,expiresAt:v.exp*1000};}:null,fishingTick:()=>store?.fishing?.tick(),fishingState:uid=>available?store.fishing?.snapshot(uid):null,fishingAction:(uid,m)=>available?store.fishing?.action(uid,m):null,heistProtected:uid=>{const r=store?.heists?.get(uid);return !!r&&!['done','failed'].includes(r.phase);},heistTick:()=>store?.heists?.tick(),heistState:uid=>available?store.heists?.snapshot(uid):null,heistAction:(uid,m)=>available?store.heists?.action(uid,m):null,handle,status:()=>({protocol:1,security:1,atelier:1,founders:1,airportFlights:1,leisureTaxi:1,golfSets:1,fishing:1,fishingCatalog:2,hunting:1,attendance:1,skinBind:1,enabled:enabled||!!testStore,configured,available,configuration:error,paymentLive:liveReadiness()}),balance,observe:(uid,s)=>{if(available&&uid){store.missions?.observe(uid,s);store.heists?.observe(uid,s);store.fishing?.observe(uid,s);}}};

@@ -12,6 +12,8 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /healthz
+    domains:
+      - api.smm2online.com
     envVars:
       - key: ALLOWED_ORIGINS
         # 배포한 게임 주소. 여러 개면 쉼표로 구분하고, 끝에 / 를 붙이지 마세요.

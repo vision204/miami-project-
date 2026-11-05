@@ -8,7 +8,7 @@ import {Heists} from './heists.js';
 import {sweepCommerce,spendCommerce,restoreCommerceSpend,validateCommerceAction,observeCommerceAction,claimCommerce} from './payment-commerce.js';
 
 export class EconomyStore {
- constructor(db,catalog,{observe=()=>null,huntProof=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.huntProof=huntProof;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});}
+ constructor(db,catalog,{observe=()=>null,huntProof=()=>null,cueProof=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.huntProof=huntProof;this.cueProof=cueProof;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});}
  async execute(uid,request){
   const starting=request?.command?.type==='heist.start';
   if(starting){try{this.heists.reserve(uid);}catch(e){throw new EconomyError('heist-busy',e.message,409);}}
@@ -32,7 +32,7 @@ export class EconomyStore {
   }
   const output=await this.db.runTransaction(async tx=>{
    const [control,ledger,done,legacy,founders]=await Promise.all([tx.get(controlRef),tx.get(ref),tx.get(receipt),tx.get(legacyRef),tx.get(this.db.doc(FOUNDERS_PATH))]);
-   if(control.data()?.lockedVersion!==1)throw new EconomyError('cutover-required','서버 거래 전환을 준비 중입니다.',503);
+   if(control.data()?.lockedVersion!==1)throw new EconomyError('cutover-required','점검 중이에요. 잠시 후 다시 시도해 주세요.',503);
    let account=ledger.exists?ledger.data():migrateAccount(legacy.exists?legacy.data():null,this.catalog);
    const expired=sweepCommerce(account);
    if(expired){tx.set(ref,account);tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});}
@@ -56,10 +56,10 @@ export class EconomyStore {
    let out;validateCommerceAction(account,request.command);const before=account.commerce?structuredClone(account):null;
    if(request.type==='save')out=applyProgress(account,request.save,this.catalog);
    else if(request.command?.type==='commerce.claim')out=claimCommerce(account,this.catalog,request.command);
-   else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),fishingProof:this.fishing.proof(uid,request.command?.run),huntProof:this.huntProof(uid,request.command?.animal),coupons:this.coupons,observation:this.observe(uid)});
+   else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),fishingProof:this.fishing.proof(uid,request.command?.run),huntProof:this.huntProof(uid,request.command?.animal),cueProof:request.command?.type==='cue.claim'?this.cueProof(uid,request.command?.game):null,coupons:this.coupons,observation:this.observe(uid)});
    account=out.account;
    spendCommerce(account,out.result?.spent||0);if(before)observeCommerceAction(before,account,request.command);
-   if(Buffer.byteLength(JSON.stringify(account))>750000)throw new EconomyError('account-too-large','계정 저장 한도를 관리자에게 확인해 주세요.',409);
+   if(Buffer.byteLength(JSON.stringify(account))>750000)throw new EconomyError('account-too-large','저장할 수 없어요. 고객센터로 문의해 주세요.',409);
    tx.set(ref,account);
    tx.create(receipt,{hash,at:Date.now(),version:account.version,result:out.result||{}});
    const save=out.save||{...(legacy.data()?.save||{}),property:account.property};

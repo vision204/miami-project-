@@ -37,7 +37,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD = 'leisure-taxi-20261104-1';
+const BUILD='hush-20261105-1';
 // const BUILD_PREV4 = 'breach-20261104-1';
 // const BUILD_PREV3 = 'golf-sets-20261103-1';
 // const BUILD_PREV2 = 'golf-rank-20261102-1';
@@ -107,7 +107,7 @@ const num = (v, lo, hi) => {
 /* ---------------------------------------------------------------------
    HTTP (Render 헬스체크 + 상태 확인용)
    --------------------------------------------------------------------- */
-const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProof:(uid,id)=>combat.huntProof(uid,id),onAccount:(uid,a,cmd)=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid){const priorArmor=p.access?.property?.armor||0;p.access=a;if(!combat.init(p).armorInitialized){p.life.armor=Math.max(0,a.property?.armor||0);p.life.armorInitialized=true;}if(cmd?.type==='buy.armor'||cmd?.type==='commerce.claim'&&(a.property.armor||0)>priorArmor){combat.init(p).armor=a.property.armor;send(p.ws,combat.snapshot(p));}else if(p.life.armor>(a.property.armor||0)){p.life.armor=a.property.armor||0;send(p.ws,combat.snapshot(p));}}},observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
+const economy = createEconomyHttp({allowed:ALLOWED,projectId:FB_PROJECT,huntProof:(uid,id)=>combat.huntProof(uid,id),cueProof:(uid,id)=>sports.cue.proof(uid,id),onAccount:(uid,a,cmd)=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid){const priorArmor=p.access?.property?.armor||0;p.access=a;if(!combat.init(p).armorInitialized){p.life.armor=Math.max(0,a.property?.armor||0);p.life.armorInitialized=true;}if(cmd?.type==='buy.armor'||cmd?.type==='commerce.claim'&&(a.property.armor||0)>priorArmor){combat.init(p).armor=a.property.armor;send(p.ws,combat.snapshot(p));}else if(p.life.armor>(a.property.armor||0)){p.life.armor=a.property.armor||0;send(p.ws,combat.snapshot(p));}}},observe:uid=>{for(const room of rooms.values())for(const p of room.values())if(p.uid===uid&&p.ready&&Date.now()-(p.stateAt||0)<5000)return {x:p.s[0],y:p.s[1],z:p.s[2],car:!!p.s[4],kind:p.s[5],speed:p.s[6],flags:p.s[7],hp:p.s[9],at:p.stateAt};return null;}});
 const reportRepo=new FirestoreReports(()=>economy.moderationBackend()),chatReports=new ChatReports({chat,repo:reportRepo,send,peers:()=>[...rooms.values()].flatMap(r=>[...r.values()])});
 setInterval(()=>{chatReports.prune();reportRepo.cleanup().catch(()=>{});},60000).unref();
 const combat=new CombatSecurity({catalog:JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url))),rules:JSON.parse(fs.readFileSync(new URL('./combat-catalog.json',import.meta.url))),account:uid=>economy.securityAccount(uid)});
@@ -124,7 +124,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.stringify({
       /* build/pvp 는 '지금 돌고 있는 서버가 새 버전인지' 확인하는 표시다.
          브라우저로 /stats 를 열어서 pvp:true 가 보이면 PvP 서버가 맞다. */
-      build: BUILD, golfRanks:1, aurelisPrivacy:1, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
+      build: BUILD, golfRanks:1, aurelisPrivacy:1, speedRacing:1, tierBadges:1, chatReports:1, security:1, boxing:1, billiards:1, bombing:1, bombFX:2, bombView:1800, fighterTiers:1, heists:1, motionV2:true, snapshotBackpressure:true, basketball: true, golf: true, sportsPads: true, sp: true, war: true, pvp: true, chat: true, friends: true, rank: true, bin: true, ctune: true, nearM: LIMITS.NEAR_M,
       /* 스냅샷으로 나간 양 (서버가 켜진 뒤 누적). json 은 옛 화면에 보낸 양이다. */
       snapMB: { bin: +(OUT.bin / 1048576).toFixed(2), json: +(OUT.json / 1048576).toFixed(2) },
       snapshotSkips:OUT.skipped,economy:economy.status(),
@@ -138,7 +138,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('MIAMI multiplayer relay. 접속은 WebSocket 으로 하세요.\n');
+  res.end('OK\n');
 });
 
 server.requestTimeout=15000;server.headersTimeout=10000;server.maxRequestsPerSocket=200;
@@ -212,7 +212,7 @@ wss.on('connection', (ws, req) => {
     if (!m || typeof m !== 'object') return;
     if(['warfx','ped','sp','pp','died'].includes(m.t)&&!peer.uid)return;
 
-    if(aurelisPrivate(peer)&&['hit','warfx','ped','sp','pp','died','bomb','bombnpc','hunt_hit','golf','basket','boxing','speedrace'].includes(m.t))return;
+    if(aurelisPrivate(peer)&&['hit','warfx','ped','sp','pp','died','bomb','bombnpc','hunt_hit','golf','basket','boxing','cue','speedrace'].includes(m.t))return;
     if (m.t === 's' && Array.isArray(m.s) && m.s.length >= 5){
       peer.s = [
         num(m.s[0], -20000, 20000),   // x
@@ -257,6 +257,8 @@ wss.on('connection', (ws, req) => {
       if(peer.ready)golfRanks.receive(peer,m);
     } else if (m.t === 'boxing'){
       sports.boxing.receive(peer,m);
+    } else if (m.t === 'cue'){
+      sports.cue.receive(peer,m);
     } else if (m.t === 'basket'){
       sports.basket.receive(peer,m);
      } else if(m.t==='hunt_hit'){
