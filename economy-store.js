@@ -1,4 +1,5 @@
-import {awardFounder,FOUNDERS_PATH} from './founders.js';
+import {FOUNDERS_PATH} from './founders.js';
+import {listMail,claimMail,loadMailFile} from './mailbox.js';
 import {createHash} from 'node:crypto';
 import {applyCommand,applyProgress,migrateAccount,EconomyError} from './economy-engine.js';
 import {MissionMonitor} from './economy-missions.js';
@@ -8,7 +9,7 @@ import {Heists} from './heists.js';
 import {sweepCommerce,spendCommerce,restoreCommerceSpend,validateCommerceAction,observeCommerceAction,claimCommerce} from './payment-commerce.js';
 
 export class EconomyStore {
- constructor(db,catalog,{observe=()=>null,huntProof=()=>null,cueProof=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.huntProof=huntProof;this.cueProof=cueProof;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});}
+ constructor(db,catalog,{observe=()=>null,huntProof=()=>null,cueProof=()=>null,coupons={}}={}){this.db=db;this.catalog=catalog;this.observe=observe;this.huntProof=huntProof;this.cueProof=cueProof;this.coupons=coupons;this.missions=new MissionMonitor(catalog.fleet);this.planner=new EconomyPlanner();this.planning=new Map();this.fishing=new Fishing();this.heists=new Heists({fleet:catalog.fleet});this.mails=loadMailFile(catalog);}
  async execute(uid,request){
   const starting=request?.command?.type==='heist.start';
   if(starting){try{this.heists.reserve(uid);}catch(e){throw new EconomyError('heist-busy',e.message,409);}}
@@ -44,17 +45,17 @@ export class EconomyStore {
      restoreCommerceSpend(account,1000,account.speedRace.paidFee||[]);delete account.speedRace;account.version++;account.updatedAt=Date.now();
      tx.set(ref,account);tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});
     }
-    const granted=awardFounder(account,uid,founders.data(),this.catalog);
-    if(granted&&ledger.exists)tx.set(ref,account);
-    if(granted)tx.set(legacyRef,{save:{...(legacy.data()?.save||{}),property:account.property},economyVersion:account.version},{mergeFields:['save','economyVersion']});
+    // 최초 200인 로브랑브르는 우편함에서 직접 수령 (2026-11-06)
     if(!ledger.exists){tx.create(this.db.doc('economyMigrations/'+uid),{at:Date.now(),source:legacy.exists?legacy.data():null});tx.create(ref,account);}
-    return {account,result:{},replayed:false};
+    return {account,result:{mail:listMail(account,uid,founders.data(),this.mails)},replayed:false};
    }
    if(!ledger.exists)throw new EconomyError('load-required','계정 원장을 먼저 불러와 주세요.',409);
+   if(request.command?.type==='mail.list')return {account,result:{mail:listMail(account,uid,founders.data(),this.mails)},replayed:false};
    if(account.speedRace&&['job.start','heist.start','fishing.start','vehicle.use'].includes(request.command?.type))throw new EconomyError('race-active','스피드레이싱을 먼저 마쳐 주세요.',409);
    if(request.version!==account.version)throw new EconomyError('version-conflict','다른 창에서 거래가 변경되었습니다. 다시 확인해 주세요.',409);
    let out;validateCommerceAction(account,request.command);const before=account.commerce?structuredClone(account):null;
    if(request.type==='save')out=applyProgress(account,request.save,this.catalog);
+   else if(request.command?.type==='mail.claim')out=claimMail(account,uid,founders.data(),this.mails,this.catalog,request.command);
    else if(request.command?.type==='commerce.claim')out=claimCommerce(account,this.catalog,request.command);
    else out=applyCommand(account,request.command,this.catalog,{plan,proof:this.missions.proof(uid,request.command?.run),heistProof:this.heists.proof(uid,request.command?.run),fishingProof:this.fishing.proof(uid,request.command?.run),huntProof:this.huntProof(uid,request.command?.animal),cueProof:request.command?.type==='cue.claim'?this.cueProof(uid,request.command?.game):null,coupons:this.coupons,observation:this.observe(uid)});
    account=out.account;
