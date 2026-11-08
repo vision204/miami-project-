@@ -1,0 +1,11 @@
+import assert from'node:assert/strict';import fs from'node:fs';import {randomUUID} from'node:crypto';
+import {migrateAccount} from'./economy-engine.js';import {EconomyStore} from'./economy-store.js';import {MemoryDB} from'./test-leisure-taxi.mjs';
+const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url)));
+const V=catalog.vehicles.find(v=>v.id==='anon_vxr1');assert.ok(V);assert.equal(V.price,30_000_000);assert.equal(catalog.fleet.at(-1),'anon_vxr1');assert.equal(catalog.vehicles.at(-1).id,'anon_vxr1');
+const H=catalog.homes.find(h=>!h.bunker&&h.slots>=2).id;const seed=cash=>migrateAccount({save:{property:{cash,homes:[H],guns:['fists']}}},catalog);
+const db=new MemoryDB();db.map.set('economyControl/config',{lockedVersion:1});db.map.set('economyAccounts/qa',seed(30_500_000));db.map.set('economyAccounts/qb',seed(4_000_000));
+const store=new EconomyStore(db,catalog),run=(uid,command,version)=>store.execute(uid,{id:randomUUID(),type:'command',version,command});
+console.log('PASS anon_vxr1 in catalog (last), $30,000,000');
+let a=await run('qa',{type:'buy.vehicle',kind:'anon_vxr1',color:0x8e949c,home:H},0).catch(e=>e);
+assert.equal(a.account.property.cash,500_000);
+const b=await run('qb',{type:'buy.vehicle',kind:'anon_vxr1',color:0x8e949c,home:H},0).catch(e=>e);assert.equal(b.code,'insufficient-funds');console.log('PASS buy anon_vxr1 : $30M charged, poor rejected');
