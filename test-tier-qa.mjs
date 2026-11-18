@@ -1,0 +1,2 @@
+import assert from 'node:assert/strict';import{TierBoard}from'./tiers.js';
+const row=(id,cash)=>({id,data:()=>({property:{cash}})}),db={collection:n=>({select:()=>({get:async()=>({docs:n==='economyAccounts'?[row('actual-player',1000),row('qa-bomb-disposable',1e12)]:[]})})})};const tiers=new TierBoard(db,{}),board=await tiers.refresh();assert.equal(board.N,1);assert(board.map.has('actual-player'));assert(!board.map.has('qa-bomb-disposable'));console.log('Disposable QA excluded from public ranking; actual player preserved');

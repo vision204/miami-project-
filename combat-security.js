@@ -1,7 +1,9 @@
 import{assetSlots}from'./economy-engine.js';
 import{aurelisPrivate}from'./aurelis-privacy.js';
 import {parseAnimal,RESPAWN_MS} from './hunting-catalog.js';
-const HP={zebra:130,wildebeest:140,gazelle:45,warthog:60,ostrich:70,giraffe:240,elephant:700,lion:200,cheetah:110,hyena:100,buffalo:380,rhino:520,hippo:480};
+const HP={zebra:130,wildebeest:140,gazelle:45,warthog:60,ostrich:70,giraffe:240,elephant:700,lion:200,cheetah:110,hyena:100,buffalo:380,rhino:520,hippo:480,
+ // 미국 대륙 맵 (2026-11-16) — nwwild.mjs 의 hp 와 같다
+ bison:900,elk:420,deer:160,pronghorn:140,coyote:110,grizzly:1100,mustang:380,cattle:420,eagle:40,alligator:260};
 // All authorization data comes from the server ledger. The browser never supplies a grant.
 export class CombatSecurity{
  constructor({catalog,rules,account,now=Date.now}){Object.assign(this,{catalog,rules,account,now});this.lives=new Map();this.shots=new Map();this.hunts=new Map();}
@@ -15,7 +17,7 @@ export class CombatSecurity{
  async fighter(p){if(!this.alive(p)||!p.s[4])return false;const kind=this.catalog.fleet[p.s[5]];if(!kind?.startsWith('fighter_')&&kind!=='war_boram')return false;const a=await this.account(p.uid);if(!a||!this.alive(p)||this.catalog.fleet[p.s[5]]!==kind)return false;const q=a.property;const rows=[...Object.values(q.cars||{}).flat(),...Object.values(q.pent?.cars||{}).flat(),...Object.values(q.hangars?.planes||{}).flat(),...(q.over||[])];return rows.some(r=>r?.k===kind&&typeof r.a==='string');}
  damage(p,dmg){const l=this.init(p),now=this.now();if(!p.ready||l.hp<=0||now<l.shieldUntil||this.private(p))return null;let d=Math.max(0,Math.min(1000,dmg));if(p.s[4])d=Math.round(d*.15);const used=Math.min(l.armor,d);l.armor-=used;l.hp=Math.max(0,l.hp-(d-used));if(l.hp<=0){l.deadUntil=now+4000;l.armor=0;}p.s[9]=l.hp;return this.snapshot(p);}
  snapshot(p){const l=this.init(p);return {t:'combat_state',hp:l.hp,armor:l.armor,shieldUntil:l.shieldUntil,serverNow:this.now()};}
- animal(id,at){const a=parseAnimal(id);if(!a||!Array.isArray(at)||at.length!==3||!at.every(Number.isFinite))return null;if(a.herd!==null){if(id!=='h'+a.herd+'.'+a.i)return null;if(Math.hypot(at[0]-a.x,at[2]-a.z)>a.r*2.4+300)return null;return {...a,hp:Math.round(HP[a.species]*(.85+.3*a.size))};}const plan=this.rules.reptiles.find(p=>'w.'+p.id===id);if(!plan||Math.hypot(at[0]-plan.x,at[2]-plan.z)>14)return null;return {...a,hp:160};}
+ animal(id,at){const a=parseAnimal(id);if(!a||!Array.isArray(at)||at.length!==3||!at.every(Number.isFinite))return null;if(a.herd!==null){if(id!==(a.nw?'n':'h')+a.herd+'.'+a.i)return null;if(Math.hypot(at[0]-a.x,at[2]-a.z)>a.r*2.4+300)return null;return {...a,hp:Math.round(HP[a.species]*(.85+.3*a.size))};}const plan=this.rules.reptiles.find(p=>'w.'+p.id===id);if(!plan||Math.hypot(at[0]-plan.x,at[2]-plan.z)>14)return null;return {...a,hp:160};}
  async huntHit(p,m){if(!this.alive(p))return false;const a=this.animal(m.animal,m.at);if(!a)return false;const ledger=await this.account(p.uid);let w=this.weapon(ledger,m.w);if(m.source==='car'){const kind=this.catalog.fleet[p.s[5]];if(!p.s[4]||p.s[6]<=5||Math.hypot(p.s[0]-m.at[0],p.s[2]-m.at[2])>12||!assetSlots(ledger?.property||{}).some(a=>a.r.k===kind))return false;w={damage:Math.min(900,p.s[6]*14)/1.8,range:12,rate:.5};}else if(p.s[4])return false;if(!ledger||!w||!this.alive(p)||Math.hypot(p.s[0]-m.at[0],p.s[1]-m.at[1],p.s[2]-m.at[2])>w.range+12)return false;const key=p.uid+':'+a.id,now=this.now();let r=this.hunts.get(key);if(r&&now-r.deadAt<RESPAWN_MS&&r.hp<=0)return false;if(!this.shot(p,w))return false;if(!r||now-r.at>RESPAWN_MS)r={id:a.id,hp:a.hp,at:now,deadAt:0};r.hp-=w.damage*1.8;r.at=now;r.pos=[...m.at];if(r.hp<=0)r.deadAt=now;this.hunts.set(key,r);if(this.hunts.size>4000)for(const[k,v]of this.hunts)if(now-v.at>RESPAWN_MS)this.hunts.delete(k);return true;}
  huntProof(uid,id){const r=this.hunts.get(uid+':'+id);return r&&r.hp<=0&&this.now()-r.deadAt<RESPAWN_MS?{id,pos:r.pos,deadAt:r.deadAt}:null;}
 }

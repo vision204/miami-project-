@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';import {Sports}from'./sports.js';import{RINGS,ringGate,newBout,punch,tickBout}from'./sports-shared/boxing-rules.js';
+const rooms=new Map([['qa',new Map()]]),sent=[],sp=new Sports(rooms,(ws,m)=>sent.push(m),()=>{}),box=sp.boxing;
+const p=(id,uid='qa'+id)=>{const a=ringGate(RINGS[0]),p={id,uid,ready:true,roomId:'qa',s:[a[0],a[1],a[2],0,0,0,0,0,0,100],stateAt:Date.now(),ws:{}};rooms.get('qa').set(id,p);return p;};
+const a=p(1),b=p(2),guest=p(3,null),far=p(4);far.s[0]+=100;
+for(const bad of[guest,far])box.receive(bad,{k:'join',ring:0,mode:'npc'});assert.deepEqual(box.state('qa')[0].seats,[null,null]);
+box.receive(a,{k:'join',ring:0,mode:'pvp'});assert.equal(box.mine(a).bout,null);assert(sp.protected(a));
+box.receive(b,{k:'join',ring:0,mode:'pvp'});let r=box.mine(a);assert(r.bout);assert.deepEqual(r.bout.ids,[1,2]);
+const now=Date.now();tickBout(r.bout,now+3100);r.bout.players[0].p=[-.5,0];r.bout.players[1].p=[.5,0];
+assert(punch(r.bout,0,0,1,now+3200));const hp=r.bout.players[1].hp;assert.equal(hp,88);assert(!punch(r.bout,0,0,2,now+3201));assert(!punch(r.bout,0,0,1,now+4000));
+r.bout.players[1].guard=true;assert(punch(r.bout,0,1,3,now+4000));assert.equal(r.bout.players[1].hp,85);
+const outsider=p(5);box.receive(outsider,{k:'punch',ring:0,hand:0,seq:999});assert.equal(r.bout.players[1].hp,85);
+const before=a.s[9];box.drop(a);assert.equal(r.bout.winner,1);assert.equal(a.s[9],before);assert(!sp.protected(a));box.drop(b);
+a.s.splice(0,3,...ringGate(RINGS[0]));box.receive(a,{k:'join',ring:0,mode:'npc'});assert.equal(box.mine(a).seats[1],'npc');box.drop(a);assert(!sp.protected(a));
+let q=newBout([1,2],0);tickBout(q,3001);q.players[0].p=[-.5,0];q.players[1].p=[.5,0];let t=4000,seq=0;for(let kd=0;kd<3;kd++){q.players[1].hp=1;q.players[0].stamina=100;punch(q,0,0,++seq,t);if(kd<2){assert(q.players[1].downUntil);tickBout(q,t+8100);assert.equal(q.players[1].hp,65);q.players[0].p=[-.5,0];q.players[1].p=[.5,0];t+=9000;}}assert.equal(q.phase,'over');assert.equal(q.winner,0);
+q=newBout([1,2],0);tickBout(q,3001);for(let round=0;round<3;round++){q.players[0].score=30;tickBout(q,q.until+1);if(round<2)tickBout(q,q.until+1);}assert.equal(q.winner,0);assert.equal(q.reason,'3라운드 판정');
+console.log('PASS boxing authentication/proximity/consent/authority/cadence/replay/guard/TKO/decision/forfeit/NPC/world-health isolation');

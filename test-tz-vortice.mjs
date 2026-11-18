@@ -1,7 +1,7 @@
 import assert from'node:assert/strict';import fs from'node:fs';import {randomUUID} from'node:crypto';
 import {migrateAccount} from'./economy-engine.js';import {EconomyStore} from'./economy-store.js';import {MemoryDB} from'./test-leisure-taxi.mjs';
 const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url)));
-const V=catalog.vehicles.find(v=>v.id==='tz_vortice');assert.ok(V);assert.equal(V.price,10_003_000);assert.equal(catalog.fleet.at(-1),'tz_vortice');assert.equal(catalog.vehicles.at(-1).id,'tz_vortice');
+const V=catalog.vehicles.find(v=>v.id==='tz_vortice');assert.ok(V);assert.equal(V.price,10_003_000);assert.equal(catalog.fleet.indexOf('tz_vortice'),301);assert.equal(catalog.vehicles.findIndex(v=>v.id==='tz_vortice'),301);   // 11-18 : 뒤에 새 차 5대가 붙어서 '맨 뒤' 대신 자리(301)로 확인
 const H=catalog.homes.find(h=>!h.bunker&&h.slots>=2).id;const seed=cash=>migrateAccount({save:{property:{cash,homes:[H],guns:['fists']}}},catalog);
 const db=new MemoryDB();db.map.set('economyControl/config',{lockedVersion:1});db.map.set('economyAccounts/qa',seed(10_503_000));db.map.set('economyAccounts/qb',seed(4_000_000));
 const store=new EconomyStore(db,catalog),run=(uid,command,version)=>store.execute(uid,{id:randomUUID(),type:'command',version,command});
