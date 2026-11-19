@@ -37,7 +37,8 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD='new-cars-20261118-1';
+const BUILD='nw-public-20261119-1';
+// const BUILD_PREV12 = 'new-cars-20261118-1';
 // const BUILD_PREV11 = 'fish-mma-20261118-1';
 // const BUILD_PREV10 = 'tz-vortice-20261108-1';
 // const BUILD_PREV9 = 'estate-opts-20261107-4';
@@ -222,9 +223,9 @@ wss.on('connection', (ws, req) => {
     if(aurelisPrivate(peer)&&['hit','warfx','ped','sp','pp','died','bomb','bombnpc','hunt_hit','golf','basket','boxing','cue','speedrace'].includes(m.t))return;
     if (m.t === 's' && Array.isArray(m.s) && m.s.length >= 5){
       peer.s = [
-        num(m.s[0], -20000, 20000),   // x
+        num(m.s[0], -53000, 20000),   // x (2026-11-18 미국 대륙 맵 서쪽 끝 -52,500 까지)
         num(m.s[1], -500, 5000),      // y
-        num(m.s[2], -20000, 20000),   // z
+        num(m.s[2], -26000, 20000),   // z (미국 대륙 맵 북쪽 끝 -25,400 까지)
         num(m.s[3], -7, 7),           // yaw
         m.s[4] ? 1 : 0,               // 차량 탑승 여부
         num(m.s[5], 0, 65535) | 0,    // vehicle catalog index; 65535 = unknown
@@ -291,7 +292,7 @@ wss.on('connection', (ws, req) => {
       } else if (m.phase==='launch'){
         if (!vec(m.d) || !['missile','shell'].includes(m.kind)) return;
         const len=Math.hypot(...m.d);if(len<.5||len>1.5)return;
-        const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<22000)?m.target:null;
+        const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<55000)?m.target:null;
         broadcast(room,{t:'warfx',from:peer.id,phase:'launch',id:m.id,kind:m.kind,o:m.o,d:m.d.map(v=>v/len),target},peer.id);
       } else if(m.phase==='impact') broadcast(room,{t:'warfx',from:peer.id,phase:'impact',id:m.id,o:m.o},peer.id);
     } else if (m.t === 'ped'){

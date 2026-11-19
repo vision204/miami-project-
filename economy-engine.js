@@ -7,6 +7,7 @@ import{RESPAWN_MS as HUNT_RESPAWN,parseAnimal,speciesById}from'./hunting-catalog
 import {CUE_REWARD} from './sports-shared/billiards-rules.js';
 import {AIRPORTS_LAYOUT,airportTerminal,airportDestination} from './airport-layout.js';
 import {taxiCommand} from './leisure-taxi.js';
+import {nwWater,nwRodShopNear,nwRecordRule} from './northwest-economy.js';   // 2026-11-18 미국 대륙 맵 : 낚시 물 · 낚싯대 상점
 
 export class EconomyError extends Error {
   constructor(code, message, status=400){super(message);this.code=code;this.status=status;}
@@ -99,17 +100,24 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
   if(!o||now-o.at>2500||o.car||!(o.hp>0)||Math.hypot(o.x-f.arrival.x,o.z-f.arrival.z)>22||Math.abs(o.y-f.arrival.y)>5)fail('flight-arrival','도착 공항에서 연결을 다시 확인해 주세요.',409);
   f.pending=false;f.arrivedAt=now;result={flight:f};flightSave={...f.arrival,property:p};break;
  }
- case 'buy.rod':{const q=entry(RODS,cmd.id);if(!observation||now-observation.at>2000||!DOCKS.some(d=>Math.hypot(d.x-observation.x,d.z-observation.z)<5.5&&Math.abs(d.y-observation.y)<3)||observation.car)fail('fishing-shop-location','부두 낚시 상인 앞에서 구매해 주세요.',409);p.fishing??={owned:[],equipped:null};if(owns(p.fishing.owned,q.id))fail('already-owned','이미 가진 낚싯대입니다.',409);spent=charge(s,q.price);add(p.fishing,'owned',q.id);p.fishing.equipped=q.id;break;}
+ case 'buy.rod':{const q=entry(RODS,cmd.id);if(!observation||now-observation.at>2000||!(DOCKS.some(d=>Math.hypot(d.x-observation.x,d.z-observation.z)<5.5&&Math.abs(d.y-observation.y)<3)||nwRodShopNear(observation))||observation.car)fail('fishing-shop-location','부두 낚시 상인 앞에서 구매해 주세요.',409);p.fishing??={owned:[],equipped:null};if(owns(p.fishing.owned,q.id))fail('already-owned','이미 가진 낚싯대입니다.',409);spent=charge(s,q.price);add(p.fishing,'owned',q.id);p.fishing.equipped=q.id;break;}
  case 'equip.rod':{entry(RODS,cmd.id);if(!owns(p.fishing?.owned,cmd.id))fail('not-owner','구매한 낚싯대만 장착할 수 있어요.',403);p.fishing.equipped=cmd.id;break;}
  case 'fishing.start':{
   if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-fishing','낚시 식별자를 확인해 주세요.');
   if(s.heist?.active||s.work?.active?.expiresAt>now||s.fishing?.active?.expiresAt>now)fail('job-active','진행 중인 낚시나 작업을 먼저 끝내세요.',409);
   const rod=RODS.find(r=>r.id===p.fishing?.equipped);if(!rod||!owns(p.fishing?.owned,rod.id))fail('rod-required','먼저 부두 상인에게 낚싯대를 구매하세요.',409);
   const o=observation,K=catalog.vehicles?.[o?.kind],boat=o?.car&&K?.type==='boat',target=cmd.target;
-  if(!o||now-o.at>1500||!Number.isFinite(o.speed)||Math.abs(o.speed)>.35||(o.flags&18)||o.hp<=0||(o.car&&!boat)||o.y<(boat?-2:-.1)||o.y>(boat?18:5))fail('fishing-location','물가나 정박한 배 위에서 멈춰 낚시하세요.',409);
   if(!Array.isArray(target)||target.length!==2||!target.every(Number.isFinite))fail('fishing-water','물 위를 향해 던지세요.');
-  const range=Math.hypot(target[0]-o.x,target[1]-o.z),zone=zoneAt(...target);if(!zone||range<3||range>rod.range+1)fail('fishing-water','낚싯대 사거리 안의 수면을 선택하세요.',409);
+  // 2026-11-18 미국 대륙 맵 : 마이애미 물이 아니면 북서 맵 물(강 · 호수 · 바다)을 본다. 서 있는 높이는 그 수면 기준.
+  const miamiZone=zoneAt(...target),nw=miamiZone?null:nwWater(...target),level=nw?nw.level:0;
+  if(!o||now-o.at>1500||!Number.isFinite(o.speed)||Math.abs(o.speed)>.35||(o.flags&18)||o.hp<=0||(o.car&&!boat)||o.y<level+(boat?-2:-.1)||o.y>level+(boat?18:(nw?6:5)))fail('fishing-location','물가나 정박한 배 위에서 멈춰 낚시하세요.',409);
+  const range=Math.hypot(target[0]-o.x,target[1]-o.z),zone=miamiZone||nw?.zone;if(!zone||range<3||range>rod.range+1)fail('fishing-water','낚싯대 사거리 안의 수면을 선택하세요.',409);
   const caught=rollFish(zone,roll);s.fishing={...(s.fishing||{}),active:{id:cmd.run,rod:rod.id,zone,target,origin:{x:o.x,y:o.y,z:o.z},startedAt:now,biteAt:now+6000+roll(6000),expiresAt:now+125000,catch:caught}};result={active:s.fishing.active};break;
+ }
+ case 'nw.record':{   // 2026-11-19 미국 대륙 맵 기록 : 더 좋은 기록일 때만 바꾼다
+  const rule=nwRecordRule(cmd.key,cmd.value);if(!rule)fail('invalid-record','기록을 저장할 수 없어요.');
+  s.northwest??={records:{}};s.northwest.records??={};const cur=s.northwest.records[cmd.key];
+  const improved=cur===undefined||rule.better(cmd.value,cur);if(improved)s.northwest.records[cmd.key]=cmd.value;result={record:{key:cmd.key,value:s.northwest.records[cmd.key],improved}};break;
  }
  case 'attendance.claim':{   // 출석 보상 (2026-10-18) : 한국 시간 날짜 · 7일 주기 · 7일 연속이면 7일차 $770,000
   const day=t=>new Date(t+9*3600000).toISOString().slice(0,10),today=day(now),yesterday=day(now-86400000);

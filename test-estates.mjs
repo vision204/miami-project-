@@ -1,7 +1,7 @@
 import assert from'node:assert/strict';import fs from'node:fs';import {randomUUID} from'node:crypto';
 import {migrateAccount,applyProgress} from'./economy-engine.js';import {EconomyStore} from'./economy-store.js';import {MemoryDB} from'./test-leisure-taxi.mjs';
 const catalog=JSON.parse(fs.readFileSync(new URL('./economy-catalog.json',import.meta.url)));
-assert.equal(catalog.estates.length,24);assert.equal(catalog.homes.filter(h=>!h.bunker).length,144);
+assert.equal(catalog.estates.length,24);const NW_IDS=new Set((await import('./northwest-sites.js')).NW_HOMES.map(h=>h.id));assert.equal(catalog.homes.filter(h=>!h.bunker&&!NW_IDS.has(h.id)).length,144);   // 11-18 : 미국 대륙 집 24채는 따로 (마이애미 144채 그대로)
 const seed=cash=>migrateAccount({save:{property:{cash,homes:[],guns:['fists']}}},catalog);
 const db=new MemoryDB();db.map.set('economyControl/config',{lockedVersion:1});
 db.map.set('economyAccounts/qa-rich',seed(60_000_000));db.map.set('economyAccounts/qa-poor',seed(1_000_000));

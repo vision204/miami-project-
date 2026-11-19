@@ -15,13 +15,15 @@ export const LEISURE_ROUTES=Object.freeze([
 export function taxiCommand(s,cmd,{now,observation,charge,fail}){
  const p=s.property,t=s.cityTaxi;
  if(cmd.type==='taxi.ride'){
-  const route=LEISURE_ROUTES.find(r=>r.id===cmd.destination),o=observation;
+  const nw=nwTaxiRoute(cmd.destination),route=nw||LEISURE_ROUTES.find(r=>r.id===cmd.destination),o=observation;
   if(!route||typeof cmd.ride!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.ride))fail('taxi-route','택시 목적지를 확인해 주세요.');
   if(t?.id===cmd.ride){if(t.destination!==route.id)fail('taxi-intent','같은 택시 기록의 목적지를 바꿀 수 없어요.',409);return {spent:0,taxi:t,position:t.arrival};}
   if(t?.pending)fail('taxi-pending','이전 택시의 도착을 먼저 확인해 주세요.',409);
   if(t&&now-t.at<5000)fail('taxi-cooldown','도착 후 잠시 기다렸다 다시 불러 주세요.',409);
   if(s.flight?.pending||s.speedRace||s.heist?.active||s.work?.active?.expiresAt>now||s.fishing?.active?.expiresAt>now)fail('taxi-busy','진행 중인 활동을 먼저 마쳐 주세요.',409);
-  if(!o||now-o.at>2500||!(o.hp>0)||o.car||(o.flags&18)||!Number.isFinite(o.speed)||Math.abs(o.speed)>1.5||![o.x,o.y,o.z].every(Number.isFinite)||o.y>20||o.y<0||o.x< -8500||o.z< -8500)fail('taxi-location','탈것에서 내려 건물 밖의 안전한 곳에서 불러 주세요.',409);
+  const far=!!nw&&!!o&&Math.hypot(o.x-route.x,o.z-route.z)>NW_TAXI_RADIUS+50;   // 미국 대륙 정류장 : 5 km 안에서만 (게임 택시 창과 같음)
+  const outside=!o||(nw?far||o.y>3000||o.y< -5:o.y>20||o.y<0||o.x< -8500||o.z< -8500);
+  if(!o||now-o.at>2500||!(o.hp>0)||o.car||(o.flags&18)||!Number.isFinite(o.speed)||Math.abs(o.speed)>1.5||![o.x,o.y,o.z].every(Number.isFinite)||outside)fail(far?'taxi-range':'taxi-location',far?'5 km 안의 시설만 택시로 갈 수 있어요.':'탈것에서 내려 건물 밖의 안전한 곳에서 불러 주세요.',409);
   const spent=charge(s,TAXI_FARE),arrival={x:route.x,y:route.y,z:route.z,yaw:route.yaw};
   s.cityTaxi={id:cmd.ride,destination:route.id,arrival,fare:TAXI_FARE,pending:true,at:now};
   return {spent,taxi:s.cityTaxi,position:arrival};
@@ -33,3 +35,5 @@ export function taxiCommand(s,cmd,{now,observation,charge,fail}){
  }
  return {spent:0,taxi:t};
 }
+// 2026-11-18 미국 대륙 맵 정류장 (northwest-sites.js). tools/apply-leisure-taxi.mjs 가 이 파일의 taxiCommand 앞부분만 게임(assets/cloud/leisure-routes.js)으로 복사하므로 import 는 맨 뒤에 둔다.
+import {nwTaxiRoute,NW_TAXI_RADIUS} from './northwest-economy.js';   // 2026-11-18 미국 대륙 맵 정류장 (northwest-sites.js)
