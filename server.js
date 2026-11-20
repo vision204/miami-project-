@@ -1,6 +1,7 @@
 import{aurelisPrivate}from'./aurelis-privacy.js';
 import {SpeedRacing,RaceLedger} from './speed-racing.js';
 import {sanitizeTierBadge} from './tier-badges.js';
+import {sanitizeSerial} from './limited-serial.js';   // 2026-11-20 한정판 뒷범퍼 시리얼
 import {CombatSecurity} from './combat-security.js';
 import {ConnectionLimits} from './connection-limits.js';
 import {Bombing} from './bombing.js';
@@ -37,7 +38,8 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD='nw-public-20261119-1';
+const BUILD='golf-20261120-1';
+// const BUILD_PREV13 = 'nw-public-20261119-1';   // 2026-11-19 : 위치 올려 보내기 32바이트 묶음(upBin) 추가
 // const BUILD_PREV12 = 'new-cars-20261118-1';
 // const BUILD_PREV11 = 'fish-mma-20261118-1';
 // const BUILD_PREV10 = 'tz-vortice-20261108-1';
@@ -195,7 +197,7 @@ wss.on('connection', (ws, req) => {
   const leader=[...room.values()].find(p=>!aurelisPrivate(p));peer.ready=false;peer.waiting=!!leader&&!leader.ready;
   peer.connectedAt=Date.now();socketPeers.set(ws,peer);room.set(peer.id, peer);
 
-  send(ws, { t: 'welcome', bombing:1, id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
+  send(ws, { t: 'welcome', bombing:1, upBin:1, svrSerial:1, id: peer.id, room: roomId, hz: LIMITS.TICK_HZ, spawn: !leader?{random:true}:leader.ready?{anchor:leader.anchor||[leader.s[0],leader.s[2]]}:{wait:true} });
   send(ws, {t:'chat_state', messages:chat.snapshot(roomId), serverNow:Date.now()});
   /* 새로 들어온 사람에게 기존 인원의 이름을 먼저 알려준다.
      (예전에는 이걸 별도 connection 핸들러 + setTimeout 으로 했는데,
@@ -208,7 +210,7 @@ wss.on('connection', (ws, req) => {
     }
   broadcast(room, { t: 'join', id: peer.id, name: peer.name }, peer.id);
 
-  ws.on('message', (buf) => {
+  ws.on('message', (buf, isBinary) => {
     peer.seen = Date.now();
     /* 초당 메시지 수 제한 — 한 명이 서버를 독차지하지 못하게 */
     const now = Date.now();
@@ -216,7 +218,8 @@ wss.on('connection', (ws, req) => {
     if (++peer.count > LIMITS.RATE) return;
 
     let m;
-    try { m = JSON.parse(buf); } catch { return; }
+    if (isBinary){ m = readUpState(buf); if (!m) return; }   // 2026-11-19 : 내 위치(s)를 32바이트 묶음으로 받는다 (JSON 의 약 1/3)
+    else { try { m = JSON.parse(buf); } catch { return; } }
     if (!m || typeof m !== 'object') return;
     if(['warfx','ped','sp','pp','died'].includes(m.t)&&!peer.uid)return;
 
@@ -273,7 +276,7 @@ wss.on('connection', (ws, req) => {
       if(peer.huntPending)return;peer.huntPending=true;combat.huntHit(peer,m).catch(()=>{}).finally(()=>{peer.huntPending=false;});
     } else if(m.t==='bomb'||m.t==='bombnpc'){
       if(m.t==='bombnpc'){if(peer.uid)bombing.receive(room,peer,m);return;}
-      if(peer.bombPending)return;peer.bombPending=true;combat.fighter(peer).then(ok=>{if(ok&&room.has(peer.id)){combat.init(peer).shieldUntil=0;bombing.receive(room,peer,m);}else send(ws,{t:'bomb',phase:'reject',message:'서버에서 로그인과 기체 소유권을 확인해 주세요.'});}).catch(()=>{}).finally(()=>{peer.bombPending=false;});
+      if(peer.bombPending)return;peer.bombPending=true;combat.fighter(peer).then(ok=>{if(ok&&room.has(peer.id)){combat.init(peer).shieldUntil=0;bombing.receive(room,peer,m);}else send(ws,{t:'bomb',phase:'reject',message:'로그인과 기체 소유를 확인해 주세요.'});}).catch(()=>{}).finally(()=>{peer.bombPending=false;});
     } else if (m.t === 'warfx'){
       if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
       // Cosmetic events only: retain existing hit validation, never apply damage here.
@@ -353,7 +356,7 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'look', id: peer.id, v: peer.look }, peer.id);
     } else if (m.t === 'ctune' && Array.isArray(m.v)){
       /* 차 튜닝 (2026-10-08) : 색·휠·스포일러 같은 번호만 오간다. 값 범위를 자르고 그대로 중계한다. */
-      const v=m.v.slice(0,16).map(x=>num(x,0,255)|0),seq=peer.ctuneSeq=(peer.ctuneSeq||0)+1;
+      const v=m.v.slice(0,16).map(x=>num(x,0,255)|0),seq=peer.ctuneSeq=(peer.ctuneSeq||0)+1;sanitizeSerial(v,peer.uid?peer.access:null);
       const publish=value=>{if(peer.ctuneSeq!==seq||!room.has(peer.id))return;peer.ctune=value;broadcast(room,{t:'ctune',id:peer.id,v:value},peer.id);};
       if(v[11]>=128&&v[11]<=135){if(!peer.uid){v[11]=0;publish(v);}else economy.tier(peer.uid).then(t=>publish(sanitizeTierBadge(v,t?.tier))).catch(()=>publish(sanitizeTierBadge(v,null)));}else publish(v);
     } else if (m.t === 'died'){
@@ -458,6 +461,14 @@ function broadcastNear(room, from, obj){
    받는 사람마다 '지난 틱에 무엇을 보냈는지' 기억한다. 지난 틱에 안 보낸 사람,
    값이 바뀐 사람, 2초가 지난 사람은 전체를 다시 보낸다. */
 const OUT = { bin: 0, json: 0, skipped: 0 };
+/* 2026-11-19 : 위치 올려 보내기 묶음 (mp.js packUpState 와 같은 배치 · 리틀엔디언 32바이트)
+   0 'S' · 1 판(1) · 2/6/10 x y z (float32) · 14 yaw×1000 · 16 탑승 · 17 차 번호 · 19 속도×10 · 21 상태 · 22 무기 · 23 체력
+   · 24 피치×1000 · 26 롤×1000 · 28 조향×10000 · 30 앞뒤 속도×10.  아래 's' 처리에서 범위를 다시 자른다. */
+function readUpState(buf){
+  if (!Buffer.isBuffer(buf) || buf.length !== 32 || buf[0] !== 0x53 || buf[1] !== 1) return null;
+  return { t: 's', s: [buf.readFloatLE(2), buf.readFloatLE(6), buf.readFloatLE(10), buf.readInt16LE(14)/1000, buf[16], buf.readUInt16LE(17),
+    buf.readUInt16LE(19)/10, buf[21], buf[22], buf[23], buf.readInt16LE(24)/1000, buf.readInt16LE(26)/1000, buf.readInt16LE(28)/10000, buf.readInt16LE(30)/10] };
+}
 const q = (v, k, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v * k)));
 function packPeer(o){
   const s = o.s, long = !!s[4] || !!s[11], b = Buffer.allocUnsafe(long ? 23 : 19);

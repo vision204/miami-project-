@@ -22,6 +22,7 @@ export function nwRecordRule(key,value){
  const [kind,id]=key.split(':');
  if(kind==='bowl'&&NW_CITIES.has(id)&&value>=0&&value<=300)return {better:(a,b)=>a>b};
  if(kind==='golf'&&NW_CITIES.has(id)&&value>=3&&value<=40)return {better:(a,b)=>a<b};
+ if(kind==='golf6'&&NW_CITIES.has(id)&&value>=6&&value<=120)return {better:(a,b)=>a<b}; // 2026-11-20 6홀 라운드
  if(kind==='course'&&NW_COURSES.includes(id)&&value>=15000&&value<=7200000)return {better:(a,b)=>a<b};
  return null;
 }

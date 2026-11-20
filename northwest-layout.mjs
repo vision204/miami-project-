@@ -610,7 +610,11 @@ function closest(points,[x,z]){
   return points.reduce((best,p)=>Math.hypot(p.x-x,p.z-z)<Math.hypot(best.x-x,best.z-z)?p:best);
 }
 
+// /* 2026-11-20 nw-lower-highways */ 도시 입구(진입로가 갈라지는 큰 길 점) 앞뒤 900m 는 예전 높이 그대로 — 도시 높이 · 집 · 가게 자리(서버 표)가 안 바뀌게.
+const CITY_KEEP={western:[[-21700,-2820],[-19470,-4270],[-11280,-5560]],pacific:[[-22100,-7750]],east:[[-10450,-10150],[-7500,-10700],[-5570,-9600]],coast:[[-4420,-11280]]};
 function route(id,waypoints,limit,width,{origin,destination,span,pins=[]}={}){
+  /* 2026-11-20 nw-lower-highways */ // 도시 밖 고속도로 : 경사 1.4배(최대 8%) · 높이 자리 32%→10% (고가 덜 뜨게)
+  const HW=['western','ridge','east','coast','pacific','north'].includes(id)&&!span,limit0=limit;if(HW)limit=Math.min(.08,limit*1.4);
   const points=profilePoints(waypoints).map(([x,z],i,array)=>{
     const previous=array[i-1];
     return {x,z,d:previous?Math.hypot(x-previous[0],z-previous[1]):0};
@@ -654,9 +658,16 @@ function route(id,waypoints,limit,width,{origin,destination,span,pins=[]}={}){
     if(Math.abs(a.y-b.y)>(b.s-a.s)*limit)
       throw new Error(id+' anchors exceed grade limit');
   }
+  if(HW&&CITY_KEEP[id]){   // 예전 방식(경사 limit0 · 32%)으로 높이를 한 번 더 구해, 도시 입구 앞뒤 900m 는 그 높이에 묶는다
+    const lo0=points.map(p=>p.y),up0=lo0.slice();
+    for(let i=1;i<points.length;i++){const dl=points[i].d*limit0;lo0[i]=Math.max(lo0[i],lo0[i-1]-dl);up0[i]=Math.min(up0[i],up0[i-1]+dl);}
+    for(let i=points.length-2;i>=0;i--){const dl=points[i+1].d*limit0;lo0[i]=Math.max(lo0[i],lo0[i+1]-dl);up0[i]=Math.min(up0[i],up0[i+1]+dl);}
+    const y0=points.map((p,i)=>{let y=between(up0[i],lo0[i],.32),mn=-Infinity,mx=Infinity;for(const a of anchors){const r=Math.abs(p.s-a.s)*limit0;mn=Math.max(mn,a.y-r);mx=Math.min(mx,a.y+r);}return Math.max(mn,Math.min(mx,y));});
+    for(const ref of CITY_KEEP[id]){const sr=closest(points,expand(ref)).s;points.forEach((p,i)=>{if(Math.abs(p.s-sr)<=900)anchors.push({s:p.s,y:y0[i]});});}
+  }
   for(let i=0;i<points.length;i++){
     const p=points[i];
-    p.y=between(upper[i],lower[i],.32);
+    p.y=between(upper[i],lower[i],HW?.1:.32);
     let min=-Infinity,max=Infinity;
     for(const anchor of anchors){
       const rise=Math.abs(p.s-anchor.s)*limit;
@@ -770,13 +781,44 @@ function buildCityRoads(list,name,parent,ref,offset,angle,step,radius){
     core.z.includes(rows[Math.floor(i/nx)])&&terrain(...points[i]).water===undefined);
   if(!candidates.length)return null;
   const gate=candidates.reduce((a,b)=>Math.hypot(points[a][0]-p.x,points[a][1]-p.z)<Math.hypot(points[b][0]-p.x,points[b][1]-p.z)?a:b);
-  const distance=Math.hypot(points[gate][0]-p.x,points[gate][1]-p.z);
+  // 2026-11-19c : 큰 길과 거의 나란히(25도 미만) 떠나는 진입로는 큰 길 위에 겹쳐 달린다(델타 헤이븐 300 m) →
+  // 도시 입구 쪽으로 30도 넘게 꺾여 나가는 큰 길 점 중 입구에 가장 가까운 점에서 떠나게 한다.
+  let from=p;
+  {
+    const P=parent.points,G=points[gate];
+    const slope=(q,i)=>{const a=P[Math.max(0,i-1)],b=P[Math.min(P.length-1,i+1)],tx=b.x-a.x,tz=b.z-a.z,ux=G[0]-q.x,uz=G[1]-q.z;
+      return Math.abs(tx*uz-tz*ux)/((Math.hypot(tx,tz)*Math.hypot(ux,uz))||1);};
+    if(slope(p,P.indexOf(p))<Math.sin(25*Math.PI/180)){
+      let best=null;
+      P.forEach((q,i)=>{const d=Math.hypot(q.x-G[0],q.z-G[1]);if(d<20||d>900||slope(q,i)<Math.sin(30*Math.PI/180))return;if(!best||d<best.d)best={q,d};});
+      if(best)from=best.q;
+    }
+  }
+  // 그래도 나란하면(입구가 큰 길 바로 밑) : 큰 길 옆으로 비켜서 나란히 달리다 입구로 들어간다.
+  let way=[[from.x,from.z],points[gate]];
+  {
+    const P=parent.points,i=P.indexOf(from),G=points[gate],a=P[Math.max(0,i-1)],b=P[Math.min(P.length-1,i+1)];
+    let tx=b.x-a.x,tz=b.z-a.z;const tl=Math.hypot(tx,tz)||1;tx/=tl;tz/=tl;
+    const ux=G[0]-from.x,uz=G[1]-from.z,along=ux*tx+uz*tz;
+    if(along<0){tx=-tx;tz=-tz;}
+    const run=Math.abs(along),side=Math.abs(ux*tz-uz*tx)/(Math.hypot(ux,uz)||1);
+    if(side<Math.sin(25*Math.PI/180)&&run>120){
+      let nx=-tz,nz=tx;if((x-from.x)*nx+(z-from.z)*nz<0){nx=-nx;nz=-nz;}
+      const off=parent.width/2+9/2+2.5,lead=Math.min(80,run*.3);
+      way=[[from.x,from.z],[from.x+tx*lead+nx*off,from.z+tz*lead+nz*off],[G[0]-tx*lead+nx*off,G[1]-tz*lead+nz*off],G];
+    }
+  }
+  const distance=Math.hypot(points[gate][0]-from.x,points[gate][1]-from.z);
   if(distance<.1)return null;
   const datum=name==='Lakefront'?117:name==='Harborline'?14:baseTerrain(x,z).height+.2;
   const climb=Math.min(36,distance*.045);
   const minY=name==='Lakefront'?103:name==='Delta Haven'?3:-Infinity;
-  const gradeY=Math.min(p.y+climb,Math.max(p.y-climb,minY,datum));
-  const connector=route('local',[[p.x,p.z],points[gate]],.055,9,{origin:p.y,destination:gradeY});
+  // 도시 높이(진입로 끝 높이)는 예전 출발점(p) 기준 그대로 — 집 · 가게 위치(서버 목록)가 바뀌지 않게.
+  const oldDistance=Math.hypot(points[gate][0]-p.x,points[gate][1]-p.z),oldClimb=Math.min(36,oldDistance*.045);
+  const gradeY=Math.min(p.y+oldClimb,Math.max(p.y-oldClimb,minY,datum));
+  let connector;
+  try{connector=route('local',way,.055,9,{origin:from.y,destination:gradeY});}
+  catch{connector=route('local',[[p.x,p.z],points[gate]],.055,9,{origin:p.y,destination:gradeY});}
   connector.access=true;
   connector.district=name;
   list.push(connector);
@@ -932,8 +974,257 @@ function buildCityRoads(list,name,parent,ref,offset,angle,step,radius){
   return {name,x,z,height,extent:Math.max(halfX,halfZ),halfX,halfZ,coreX,coreZ,angle,step,radius,blocks,plan,at,outskirts,loop};
 }
 
+// 2026-11-19 (Claude) 도시를 지나는 국도 높이 정리 · 끊긴 끝 다듬기.
+// · 도시 땅은 도시 높이로 평평하게 다진다. 그런데 국도는 원래 지형을 따라 그려서, 도시 안에서 거리보다 3~9m 높게
+//   떠 있었다(고가로 보기엔 낮아서 도로 바로 위에 판이 걸린 모양, 교차로에서도 안 만난다).
+//   → 도시 구역(+60m) 안에서 도시 높이와 9m 안쪽으로 차이 나는 국도 점은 도시 높이로 내리고(또는 올리고),
+//     그 앞뒤는 6% 경사로 이어 붙인다. 9m 넘게 높은 곳은 진짜 고가라 그대로.
+// · 다른 길이 갈라져 나가는 점(분기점)은 높이를 그대로 둔다. 도시 진입로(connector)는 시작 높이 차이만큼 길이에 따라 고르게 맞춘다.
+// · 국도 끝이 아무 길에도 안 닿고(막다른 끝) 마지막 갈림점에서 300m 안이면 그 갈림점까지 잘라 낸다(허공에 떠 있던 끝).
+function* settleHighways(list,districts){
+  const G=.06,CLEAR=9,PAD=60,ids=new Set(['western','canyon','ridge','east','coast','pacific','north']);
+  const connectors=list.filter(r=>r.access&&r.district&&r.id==='local');
+  const near=(a,b,r=1.5)=>Math.abs(a.x-b.x)<r&&Math.abs(a.z-b.z)<r;
+  // 2026-11-19b : 갈림점 기록 — 어떤 길의 끝이 국도 위에 닿아 있으면, 국도 높이를 고친 뒤 그 끝을 국도 새 높이에 맞춰
+  // 완만하게(5%) 따라오게 한다. (예전엔 국도 쪽 점을 얼려서 국도에 7m 턱이 생기고 갈래 길은 따로 내려가 어긋났다)
+  const touches=[];
+  for(const road of list){
+    for(const end of [0,road.points.length-1]){
+      const e=road.points[end];
+      for(const other of list){
+        if(other===road||!ids.has(other.id))continue;
+        const j=other.points.findIndex(q=>near(q,e,3)&&Math.abs(q.y-e.y)<1.5);
+        if(j>=0){touches.push({road,end,other,j});break;}
+      }
+    }
+  }
+  for(const road of list){
+    if(!ids.has(road.id))continue;
+    const P=road.points,target=new Array(P.length).fill(null),T=[];
+    for(let i=0;i<P.length;i++){
+      const p=P[i];
+      for(const d of districts){
+        const dx=p.x-d.x,dz=p.z-d.z,c=Math.cos(d.angle),s=Math.sin(d.angle);
+        if(Math.abs(dx*c+dz*s)>d.halfX+PAD||Math.abs(-dx*s+dz*c)>d.halfZ+PAD)continue;
+        const h=p.y-d.height;
+        if(Math.abs(h)<CLEAR&&Math.abs(h)>.05){target[i]=d.height+.05;T.push(i);break;}
+      }
+    }
+    if(!T.length)continue;
+    yield;
+    const frozen=new Set();
+    // 6% 경사 띠 (앞 · 뒤로 한 번씩 훑기) = 모든 목표점에서 잰 min / max 와 같다
+    const old=P.map(p=>p.y),hi=new Array(P.length).fill(Infinity),lo=new Array(P.length).fill(-Infinity);
+    for(let i=0;i<P.length;i++){if(target[i]!==null){hi[i]=lo[i]=target[i];}if(i){const ds=P[i].s-P[i-1].s;hi[i]=Math.min(hi[i],hi[i-1]+G*ds);lo[i]=Math.max(lo[i],lo[i-1]-G*ds);}}
+    for(let i=P.length-2;i>=0;i--){const ds=P[i+1].s-P[i].s;hi[i]=Math.min(hi[i],hi[i+1]+G*ds);lo[i]=Math.max(lo[i],lo[i+1]-G*ds);}
+    for(let i=0;i<P.length;i++){if(frozen.has(i))continue;P[i].y=Math.min(Math.max(old[i],lo[i]),hi[i]);}
+    for(const c of connectors){
+      const a=c.points[0],i=P.findIndex(p=>near(p,a));
+      if(i<0)continue;
+      const delta=P[i].y-a.y;if(Math.abs(delta)<1e-6)continue;
+      for(const q of c.points)q.y+=delta*Math.max(0,1-q.s/Math.max(1,c.length));
+    }
+  }
+  // 갈림점 맞추기 (두 번 돌려 갈래의 갈래까지 따라오게)
+  for(let pass=0;pass<2;pass++)for(const {road,end,other,j} of touches){
+    const P=road.points,e=P[end],delta=other.points[j].y-e.y;
+    if(Math.abs(delta)<.01)continue;
+    const len=Math.max(60,Math.abs(delta)/.025),from=e.s;
+    for(const q of P){const t=Math.abs(q.s-from)/len;if(t>=1)continue;q.y+=delta*(1-t*t*(3-2*t));}
+  }
+  // 막다른 국도 끝 : 다른 길과 안 닿으면 가장 가까운 갈림점까지 자른다 (300m 안일 때만)
+  for(const road of list){
+    if(!ids.has(road.id))continue;
+    for(const atEnd of [true,false]){
+      const P=road.points,e=atEnd?P.at(-1):P[0];
+      const touches=list.some(o=>o!==road&&o.points.some(q=>near(q,e,3)));
+      if(touches)continue;
+      const order=atEnd?[...P.keys()].reverse():[...P.keys()];
+      let k=-1;
+      for(const i of order){
+        if(Math.abs(P[i].s-e.s)>300)break;
+        if(list.some(o=>o!==road&&(near(o.points[0],P[i])||near(o.points.at(-1),P[i])))){k=i;break;}
+      }
+      if(k>=0){
+        if(atEnd)P.length=k+1;
+        else{const cut=P[k].s;P.splice(0,k);for(const q of P)q.s-=cut;P[0].d=0;}
+        road.length=P.at(-1).s;
+        continue;
+      }
+      // 갈림점이 없으면 : 끝에서 1.5km 안쪽 점 중, 600m 안의 도시 길로 6% 안쪽 경사 연결로를 낼 수 있는 곳을 찾아
+      // 거기까지 자르고 연결로를 낸다 (예 : 솔라라 쪽 협곡 도로 끝이 도시 길보다 180m 높이 허공에서 끝나던 것)
+      let best=null;
+      const cityRoads=list.filter(o=>o.district&&o!==road&&o.points.some(q=>Math.abs(q.x-e.x)<2200&&Math.abs(q.z-e.z)<2200));
+      for(const i of order){
+        const back=Math.abs(P[i].s-e.s);if(back>1500)break;
+        if(best&&back>best.back+1)break;
+        yield;
+        for(const o of cityRoads){
+          for(const q of o.points){
+            const d=Math.hypot(q.x-P[i].x,q.z-P[i].z);
+            if(d<25||d>600||Math.abs(q.y-P[i].y)>.054*d)continue;
+            if(!best||back<best.back-1||d<best.d)best={i,q,d,back,district:o.district};
+          }
+        }
+      }
+      if(!best){
+        // 가까운 도시 길(600m 안)이 있는데 높이 차가 커서 곧장 못 내려가면, 도시 바깥쪽으로 크게 돌아 내려가는 연결로(5.5%)를 낸다.
+        let near=null;
+        for(const o of list){if(!o.district||o===road)continue;for(const q of o.points){const d=Math.hypot(q.x-e.x,q.z-e.z);if(d<600&&(!near||d<near.d))near={q,d,district:o.district};}}
+        if(!near)continue;
+        const city=districts.find(c=>c.name===near.district),dy=Math.abs(e.y-near.q.y),need=dy/.05;
+        if(!city||need<near.d*1.2)continue;
+        let ox=e.x-city.x,oz=e.z-city.z;const ol=Math.hypot(ox,oz)||1;ox/=ol;oz/=ol;
+        const reach=need*.5,turn=.5,c=Math.cos(turn),s=Math.sin(turn);
+        const mid=[e.x+(ox*c-oz*s)*reach,e.z+(ox*s+oz*c)*reach];
+        try{
+          const link=route('local',[[e.x,e.z],mid,[near.q.x,near.q.z]],.06,Math.min(road.width,12),{origin:e.y,destination:near.q.y});
+          link.access=true;link.district=near.district;link.link=road.id;
+          list.push(link);
+        }catch{}
+        continue;
+      }
+      const {i,q}=best,from=P[i];
+      if(atEnd)P.length=i+1;
+      else{const cut=P[i].s;P.splice(0,i);for(const p of P)p.s-=cut;P[0].d=0;}
+      road.length=P.at(-1).s;
+      try{
+        const link=route('local',[[from.x,from.z],[q.x,q.z]],.06,Math.min(road.width,12),{origin:from.y,destination:q.y});
+        link.access=true;link.district=best.district;link.link=road.id;
+        list.push(link);
+      }catch{}
+    }
+  }
+  return touches;
+}
+
+// 2026-11-19c : 국도 · 진입로가 다른 길과 어중간한 높이(1.05~5.5 m)로 엇갈리는 곳을 고친다.
+// 강 접근로 올리기(clearRiver)까지 끝난 뒤에 돌리고, 끝에 갈림점을 다시 맞춘다.
+function* fixCrossings(list,touches){
+  const ids=new Set(['western','canyon','ridge','east','coast','pacific','north']);
+  // 어중간한 교차 : 국도가 다른 길과 1.05~5.5 m 차이로 엇갈리면 차가 걸리거나 파묻힌다.
+  // 3 m 이하는 같은 높이(평면 교차), 그보다 크면 7.5 m 차이(고가 · 지하차도)가 되게 국도 높이를 완만하게 고친다.
+  // 이미 맞는 교차(1.05 m 안)는 그 높이를 지키게 같이 붙잡는다. 갈래 길 끝은 아래 '갈림점 맞추기'가 따라오게 한다.
+  {
+    const GC=64,segs=new Map(),fixable=r=>ids.has(r.id)||r.access&&r.district&&r.id==='local';
+    for(const r of list){
+      if(fixable(r))continue;
+      for(let i=1;i<r.points.length;i++){
+        const a=r.points[i-1],b=r.points[i];
+        for(let gx=Math.floor(Math.min(a.x,b.x)/GC);gx<=Math.floor(Math.max(a.x,b.x)/GC);gx++)
+          for(let gz=Math.floor(Math.min(a.z,b.z)/GC);gz<=Math.floor(Math.max(a.z,b.z)/GC);gz++){
+            const k=gx*100003+gz;if(!segs.has(k))segs.set(k,[]);segs.get(k).push({r,a,b});
+          }
+      }
+    }
+    for(let pass=0;pass<3;pass++)for(const road of list){
+      if(!fixable(road))continue;
+      yield;
+      const P=road.points,target=new Array(P.length).fill(null),fixes=[],hits=[];let fix=false;
+      for(let i=1;i<P.length;i++){
+        const a=P[i-1],b=P[i],dx=b.x-a.x,dz=b.z-a.z,seen=new Set();
+        for(let gx=Math.floor(Math.min(a.x,b.x)/GC);gx<=Math.floor(Math.max(a.x,b.x)/GC);gx++)
+          for(let gz=Math.floor(Math.min(a.z,b.z)/GC);gz<=Math.floor(Math.max(a.z,b.z)/GC);gz++)
+            for(const q of segs.get(gx*100003+gz)??[]){
+              if(seen.has(q))continue;seen.add(q);
+              const ex=q.b.x-q.a.x,ez=q.b.z-q.a.z,cross=dx*ez-dz*ex,len=Math.hypot(dx,dz)*Math.hypot(ex,ez);
+              if(!len)continue;
+              if(Math.abs(cross)/len<.28){   /* 2026-11-20 nw-lower-highways */ // 나란히 겹치는 길 : 가운데 점에서 옆 거리가 두 폭 안이면 교차처럼 다룬다
+                const mx=(a.x+b.x)/2,mz=(a.z+b.z)/2,ll=ex*ex+ez*ez||1,v=Math.max(0,Math.min(1,((mx-q.a.x)*ex+(mz-q.a.z)*ez)/ll));
+                if(Math.hypot(mx-q.a.x-ex*v,mz-q.a.z-ez*v)<(road.width+q.r.width)/2-1&&v>0&&v<1&&a.s>150&&b.s<P.at(-1).s-150){const yH=(a.y+b.y)/2,yL=between(q.a.y,q.b.y,v);hits.push({k:i,s:(a.s+b.s)/2,yH,yL,dy:yH-yL});}
+                continue;
+              }
+              const ox=q.a.x-a.x,oz=q.a.z-a.z,u=(ox*ez-oz*ex)/cross,v=(ox*dz-oz*dx)/cross;
+              if(u<0||u>1||v<0||v>1)continue;
+              const cx=a.x+dx*u,cz=a.z+dz*u,ends=[q.r.points[0],q.r.points.at(-1)];
+              if(ends.some(e=>Math.hypot(e.x-cx,e.z-cz)<18))continue;          // 갈래 길 끝(T 자) 은 갈림점
+              const yH=between(a.y,b.y,u),yL=between(q.a.y,q.b.y,v),k=u<.5?i-1:i;
+              hits.push({k,s:between(a.s,b.s,u),yH,yL,dy:yH-yL,sin:Math.abs(cross)/len});
+            }
+      }
+      // 가까운(80 m 안) 교차는 한 묶음으로 정한다 : 모두 3 m 안이고 상대 길 높이가 비슷하면 평면 교차,
+      // 아니면 묶음 전체를 7.5 m 위(또는 아래)로 지나간다 (도로 폭 끝에서도 5.5 m 넘게 비게).
+      hits.sort((p,q)=>p.s-q.s);
+      for(let g=0;g<hits.length;){
+        let h=g;while(h+1<hits.length&&hits[h+1].s-hits[h].s<80)h++;
+        const grp=hits.slice(g,h+1);g=h+1;
+        if(grp.every(c=>Math.abs(c.dy)<=1.05||Math.abs(c.dy)>=7)){for(const c of grp)if(Math.abs(c.dy)<=1.05&&target[c.k]===null)target[c.k]=P[c.k].y;continue;}
+        const ys=grp.map(c=>c.yL),flat=Math.max(...ys)-Math.min(...ys)<=1.5&&grp.every(c=>Math.abs(c.dy)<=3);
+        const up=grp.reduce((t,c)=>t+c.dy,0)>=0;
+        for(const c of grp){
+          const want=flat?(Math.max(...ys)+Math.min(...ys))/2:up?Math.max(...ys)+7.5:Math.min(...ys)-7.5;
+          target[c.k]=P[c.k].y+(want-c.yH);fixes.push(c.k);fix=true;   /* 2026-11-20 nw-lower-highways */
+          if(!flat&&!(c.sin>.6))for(const kk of [c.k-2,c.k-1,c.k+1,c.k+2])if(kk>=0&&kk<P.length&&target[kk]===null)target[kk]=P[kk].y+(want-c.yH);   // 위아래로 지날 땐 비스듬히 겹치는 앞뒤도 같이
+        }
+      }
+      if(!fix)continue;
+      // 높이 '바뀐 양'으로 맞춘다 (3번 되풀이) : 교차점에서 정한 만큼, 그 둘레는 3.5% 경사로 줄어들어 멀리선 0 (길 나머지는 그대로).
+      const G=.035,old=P.map(p=>p.y),ts=[];
+      for(let k=0;k<P.length;k++)if(target[k]!==null)ts.push({s:P[k].s,d:target[k]-old[k]});
+      for(let i=0;i<P.length;i++){
+        let lo=-Infinity,hi=Infinity;
+        for(const t of ts){const ds=Math.abs(P[i].s-t.s);lo=Math.max(lo,t.d-G*ds);hi=Math.min(hi,t.d+G*ds);}
+        P[i].y=old[i]+(lo<=hi?Math.min(Math.max(0,lo),hi):(lo+hi)/2);
+      }
+    }
+  }
+  // 갈림점 맞추기 (두 번 돌려 갈래의 갈래까지 따라오게)
+  for(let pass=0;pass<2;pass++)for(const {road,end,other,j} of touches){
+    const P=road.points,e=P[end],delta=other.points[j].y-e.y;
+    if(Math.abs(delta)<.01)continue;
+    const len=Math.max(60,Math.abs(delta)/.025),from=e.s;
+    for(const q of P){const t=Math.abs(q.s-from)/len;if(t>=1)continue;q.y+=delta*(1-t*t*(3-2*t));}
+  }
+}
+
+// 2026-11-19c : 산길 '서밋 패스' — 능선 도로 끝(산 앞 고가에서 허공으로 끊기던 곳)을 바로 앞 산에 터널로 넣고,
+// 계곡은 높은 다리로 건너, 서쪽 산은 두 번째 터널로 지나 태평양 도로 끝(숲속에서 끊기던 곳)에 닿게 한다.
+// 높이는 두 끝을 곧게 잇는 내리막(약 6.5%). 땅보다 11m 넘게 낮은 구간(좌우 폭까지)은 터널로 표시한다
+// (p.tunnel). 게임은 터널 구간 위 땅을 깎지 않고, 입구에 갱문을 세우고 안에 터널 벽을 만든다.
+const SUMMIT_COVER=11;
+function summitRoad(ridge,pacific){
+  const a=ridge.points.at(-1),b=pacific.points.at(-1),pa=ridge.points.at(-7),pb=pacific.points.at(-7);
+  const unit=(x,z)=>{const l=Math.hypot(x,z)||1;return [x/l,z/l];};
+  const ua=unit(a.x-pa.x,a.z-pa.z),ub=unit(b.x-pb.x,b.z-pb.z);
+  const way=[[a.x,a.z],[a.x+ua[0]*350,a.z+ua[1]*350],[-30650,-19250],[-31300,-19150],[-32800,-18750],
+    [-34300,-18650],[-35900,-18650],[b.x+ub[0]*450,b.z+ub[1]*450],[b.x,b.z]];
+  const road=route('summit',way,.07,11,{origin:a.y,destination:b.y,span:(_raw,t)=>between(a.y,b.y,t)});
+  markTunnels(road);
+  a.stop=true;b.stop=true;road.points[0].stop=true;road.points.at(-1).stop=true;
+  return road;
+}
+function markTunnels(road){
+  const P=road.points,n=P.length,deep=new Array(n).fill(false),side=road.width/2+10;
+  for(let i=0;i<n;i++){
+    const p=P[i],q=P[Math.min(n-1,i+1)],o=P[Math.max(0,i-1)],dx=q.x-o.x,dz=q.z-o.z,l=Math.hypot(dx,dz)||1,nx=-dz/l,nz=dx/l;
+    let cover=Infinity;
+    for(const u of [-side,0,side]){const t=terrain(p.x+nx*u,p.z+nz*u);cover=Math.min(cover,(t.water??t.height)-p.y);}
+    p.cover=cover;deep[i]=cover>=SUMMIT_COVER;
+  }
+  const runs=[];
+  for(let i=0;i<n;i++){
+    if(!deep[i])continue;
+    let j=i;while(j+1<n&&deep[j+1])j++;
+    const last=runs.at(-1);
+    if(last&&P[i].s-P[last[1]].s<=40)last[1]=j;else runs.push([i,j]);
+    i=j;
+  }
+  road.tunnels=[];
+  for(const [i,j] of runs){
+    // 태평양 도로 끝 쪽(마지막 1.1km)은 태평양 도로처럼 깎은 길로 둔다 (끝 바로 앞 갱문은 150m 절벽이 된다)
+    if(P[j].s-P[i].s<100||P[i].s>road.length-1100)continue;
+    for(let k=i;k<=j;k++)P[k].tunnel=true;
+    P[Math.max(0,i-1)].portal=true;P[Math.min(n-1,j+1)].portal=true;
+    road.tunnels.push([P[i].s,P[j].s]);
+  }
+  const portals=P.filter(p=>p.portal);
+  for(const p of P)if(!p.tunnel&&portals.length)p.portalGap=Math.min(...portals.map(q=>Math.abs(q.s-p.s)));
+}
+
 const gridSize=256;
-export function createRoads(start){
+// 2026-11-19 : 잘게 나눠 짓기(제너레이터). createRoads 는 예전처럼 한 번에 (서버 northwest-layout.mjs 도 같은 결과).
+export function createRoads(start){const it=createRoadsSteps(start);for(;;){const r=it.next();if(r.done)return r.value;}}
+export function* createRoadsSteps(start){
   const main=route('western',trunk.map(expand),.053,15,{pins:[
     [-11280,-5560,14],[-19470,-4270,151],[-21700,-2820,52],
   ]});
@@ -941,19 +1232,27 @@ export function createRoads(start){
     const p=closest(parent.points,expand(junction));
     return route(id,[[p.x,p.z],...list.map(expand)],grade,width,{origin:p.y,...options});
   }
+  yield;
   const canyonStart=closest(main.points,expand([-17900,-5800]));
   const end=expand(canyonCrossing.at(-1));
   const endY=Math.max(55,terrain(...end).height)+.2;
+  yield;
   const canyon=branch('canyon',canyonCrossing,main,[-17900,-5800],.052,12,{
     destination:Math.max(endY,canyonStart.y-175),
     span:(_raw,t)=>between(canyonStart.y,Math.max(endY,canyonStart.y-175),t),
   });
+  yield;
   const ridge=branch('ridge',ridgeDrive,main,[-15100,-6080],.075,10);
+  yield;
   const east=branch('east',eastern,main,[-11350,-5560],.051,13,{pins:[[-10450,-10150,140]]});
+  yield;
   const coast=branch('coast',northCoast,east,[-5790,-10170],.047,11);
+  yield;
   const pacificRoad=branch('pacific',pacific,main,[-21100,-3600],.058,13,{pins:[[-22100,-7750,200]]});
+  yield;
   const northStart=closest(ridge.points,expand([-18650,-10400]));
   const northEnd=closest(east.points,expand([-10500,-10150]));
+  yield;
   const north=route('north',[[northStart.x,northStart.z],...northern.map(expand),[northEnd.x,northEnd.z]],.064,13,{origin:northStart.y,destination:northEnd.y});
   const junction=closest(north.points,[-25285,-19731]);
   const index=north.points.indexOf(junction),before=north.points[index-3],after=north.points[index+3];
@@ -963,17 +1262,22 @@ export function createRoads(start){
   const overlook={...place(0,91,3.5),w:64,d:24};
   const mountain={...place(0,166,9),angle:angle+Math.PI};
   const driveway=[junction,place(7,15,.35),place(4,31,1.7),parking];
+  yield;
   const approach=route('rushmore-access',driveway.map(p=>[p.x,p.z]),.085,7,{
     origin:junction.y,destination:parking.y,
     span:(_raw,t)=>between(junction.y,parking.y,t),
   });
   const rushmore={parking,overlook,mountain,junction,approach};
   const join=main.points[0];
+  yield;
   const bridge=route('bridge',[[start.x,start.z],[join.x,join.z]],.055,16,{
     origin:start.y,destination:join.y,
     span:(_raw,t)=>between(start.y,join.y,t)+28*Math.sin(Math.PI*t)**2,
   });
-  const list=[bridge,main,canyon,ridge,east,coast,pacificRoad,north,approach];
+  yield;
+  yield;
+  const summit=summitRoad(ridge,pacificRoad);
+  const list=[bridge,main,canyon,ridge,east,coast,pacificRoad,north,approach,summit];
   const districts=[];
   const grids=[
     ['Westport',main,[-21700,-2820], [220,-510], .21, 135, 2],
@@ -986,9 +1290,13 @@ export function createRoads(start){
     ['Harborline',coast,[-4420,-11280], [-695,-170], -.18, 115, 3],
   ];
   for(const [name,parent,ref,offset,angle,step,radius] of grids){
+    yield;
     const city=buildCityRoads(list,name,parent,ref,offset,angle,step,radius);
     if(city)districts.push(city);
   }
+  yield;
+  const touches=yield* settleHighways(list,districts);
+  yield;
   const observatorySite={x:-34610,y:109,z:-4770,angle:.16,w:112,d:86};
   const westportRoads=list.filter(road=>road.district==='Westport');
   const observatoryJunction=closest(westportRoads.flatMap(road=>road.points),[-34662,-4183]);
@@ -1003,6 +1311,7 @@ export function createRoads(start){
   observatoryApproach.access=true;
   list.push(observatoryApproach);
   const observatory={site:observatorySite,approach:observatoryApproach,junction:observatoryJunction};
+  yield;
   const gateStart=closest(list.filter(road=>road.district==='Baycrest').flatMap(road=>[road.points[0],road.points.at(-1)]),goldenGate.start);
   if(Math.hypot(gateStart.x-goldenGate.start[0],gateStart.z-goldenGate.start[1])>6)
     throw new Error('Golden Gate approach lost its Baycrest street');
@@ -1022,8 +1331,10 @@ export function createRoads(start){
   const [vx,vz]=gatePoint(goldenGate.end+44);
   const gate={...goldenGate,road:gateRoad,
     vista:{x:vx,z:vz,y:gateDeck+.05,angle:Math.atan2(goldenGate.dir[1],goldenGate.dir[0]),w:88,d:74}};
+  yield;
   const riverApproaches=new Map();
   for(const road of list){
+    yield;
     const key=road.district??road.id;
     for(const p of road.points){
       const water=terrain(p.x,p.z);
@@ -1040,7 +1351,8 @@ export function createRoads(start){
     for(const p of road.points)for(const a of approaches)
       p.y=Math.max(p.y,a.y-Math.hypot(p.x-a.x,p.z-a.z)*.04);
   }
-  for(const road of list)clearRiver(road);
+  for(const road of list){clearRiver(road);yield;}
+  yield* fixCrossings(list,touches);
   const grid=new Map();
   function indexRoad(road){
     const p=road.points;
@@ -1055,7 +1367,7 @@ export function createRoads(start){
         }
     }
   }
-  for(const road of list)indexRoad(road);
+  for(const road of list){indexRoad(road);yield;}
   function addBlockStreet(city,points,purpose){
     const height=city.height,profile={origin:height,destination:height,span:()=>height};
     const street=route('local',points,.04,6.5,profile);
@@ -1065,8 +1377,10 @@ export function createRoads(start){
     clearRiver(street);
     list.push(street);indexRoad(street);
   }
-  function finishCityStreets(){
+  function finishCityStreets(){for(const _ of finishCityStreetsSteps());}
+  function* finishCityStreetsSteps(){
     for(const road of list){
+      yield;
       const junctions=[];
       for(let i=1;i<road.points.length;i++){
         const a=road.points[i-1],b=road.points[i],dx=b.x-a.x,dz=b.z-a.z;
@@ -1138,5 +1452,5 @@ export function createRoads(start){
         }
     return [...nearby].map(({a,b,road})=>[a.x,a.z,b.x,b.z,road.width]);
   }
-  return {list,nearest,districts,segmentsNear,addBlockStreet,finishCityStreets,rushmore,observatory,gate};
+  return {list,nearest,districts,segmentsNear,addBlockStreet,finishCityStreets,finishCityStreetsSteps,rushmore,observatory,gate};
 }

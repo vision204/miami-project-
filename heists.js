@@ -27,7 +27,7 @@ export class Heists{
  observe(uid,s){const r=this.get(uid);if(!r||['done','failed'].includes(r.phase))return;const now=this.clock(),p={x:s[0],y:s[1],z:s[2],car:!!s[4],yaw:s[3],at:now};if(![p.x,p.y,p.z].every(Number.isFinite))return;
   if(p.car&&this.fleet.length&&this.fleet[s[5]]!=='sports'){this.fail(r,'작전에는 지급 차량만 쓸 수 있어요.');return;}
   /* 부두 밖 : 3초까지는 봐준다(난간에 부딪혀 튕기는 순간 등). 물에 빠지면 끝 */
-  if(p.y>TIDE.y+2.5){this.fail(r,'비정상적인 높이의 이동입니다.');return;}
+  if(p.y>TIDE.y+2.5){this.fail(r,'이동할 수 없는 위치예요.');return;}
   const off=contractFloor(p.x,p.z,1.5)===null;
   if(p.y<TIDE.y-1.2){this.fail(r,'부두 밖으로 떨어졌어요 · 집결지에서 다시 도전하세요.');return;}
   if(off){r.offAt||=now;if(now-r.offAt>HZ.offDeck){this.fail(r,'작전 부두를 벗어났어요.');return;}}else r.offAt=0;

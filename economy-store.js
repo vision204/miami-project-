@@ -25,7 +25,7 @@ export class EconomyStore {
    const prior=await receipt.get();if(!prior.exists){
     const current=(await ref.get()).data();if(current?.heist?.active||current?.fishing?.active?.expiresAt>Date.now())throw new EconomyError('job-active','진행 중인 습격을 먼저 종료하세요.',409);if(!current||request.version!==current.version)throw new EconomyError('version-conflict','계정 거래 정보를 다시 불러와 주세요.',409);
     if(current.work?.active?.expiresAt>Date.now()||(current.work?.next?.[request.command.job]||0)>Date.now())throw new EconomyError('job-active','진행 중인 임무 또는 대기시간이 남았습니다.',409);
-    if(!observation||Date.now()-observation.at>5000)throw new EconomyError('relay-required','멀티플레이 서버에 연결한 뒤 시작해 주세요.',409);
+    if(!observation||Date.now()-observation.at>5000)throw new EconomyError('relay-required','온라인에 연결한 뒤 시작해 주세요.',409);
     if(this.planning.has(uid)&&this.planning.get(uid).id!==id)throw new EconomyError('planner-busy','이전 업무 경로를 준비 중입니다.',409);
     let task=this.planning.get(uid)?.task;if(!task){task=this.planner.plan(request.command.job,request.command,observation,parseInt(hash.slice(0,8),16));this.planning.set(uid,{id,task});}
     try{plan=await task;}finally{if(this.planning.get(uid)?.id===id)this.planning.delete(uid);}
@@ -49,7 +49,7 @@ export class EconomyStore {
     if(!ledger.exists){tx.create(this.db.doc('economyMigrations/'+uid),{at:Date.now(),source:legacy.exists?legacy.data():null});tx.create(ref,account);}
     return {account,result:{mail:listMail(account,uid,founders.data(),this.mails)},replayed:false};
    }
-   if(!ledger.exists)throw new EconomyError('load-required','계정 원장을 먼저 불러와 주세요.',409);
+   if(!ledger.exists)throw new EconomyError('load-required','계정 정보를 먼저 불러와 주세요.',409);
    if(request.command?.type==='mail.list')return {account,result:{mail:listMail(account,uid,founders.data(),this.mails)},replayed:false};
    if(account.speedRace&&['job.start','heist.start','fishing.start','vehicle.use'].includes(request.command?.type))throw new EconomyError('race-active','스피드레이싱을 먼저 마쳐 주세요.',409);
    if(request.version!==account.version)throw new EconomyError('version-conflict','다른 창에서 거래가 변경되었습니다. 다시 확인해 주세요.',409);

@@ -78,7 +78,7 @@ export function tuningCost(o,n,P){let v=0;const a=o.t||{},b=n.t||{};if(n.c!==o.c
 
 // The server accepts intents, never client totals, cash, ownership lists or paid prices.
 export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,huntProof=null,cueProof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
- if(!account||account.schema!==1)fail('invalid-account','계정 원장을 불러올 수 없습니다.',503);
+ if(!account||account.schema!==1)fail('invalid-account','계정 정보를 불러올 수 없습니다.',503);
  const s=copy(account),p=s.property;let spent=0,result={},flightSave=null,taxiPosition=null;
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
  if(s.cityTaxi?.pending&&['flight.board','job.start','heist.start','fishing.start','vehicle.use'].includes(cmd.type))fail('taxi-pending','택시 도착을 먼저 확인해 주세요.',409);
