@@ -613,6 +613,7 @@ function closest(points,[x,z]){
 // /* 2026-11-20 nw-lower-highways */ 도시 입구(진입로가 갈라지는 큰 길 점) 앞뒤 900m 는 예전 높이 그대로 — 도시 높이 · 집 · 가게 자리(서버 표)가 안 바뀌게.
 const CITY_KEEP={western:[[-21700,-2820],[-19470,-4270],[-11280,-5560]],pacific:[[-22100,-7750]],east:[[-10450,-10150],[-7500,-10700],[-5570,-9600]],coast:[[-4420,-11280]]};
 function route(id,waypoints,limit,width,{origin,destination,span,pins=[]}={}){
+  /* 2026-11-20 nw-4lane */ if(['western','ridge','east','coast','pacific','north','canyon'].includes(id))width=Math.max(width,18); // 도시 사이 고속도로 = 4차선 (편도 2차선 3.6 m + 갓길)
   /* 2026-11-20 nw-lower-highways */ // 도시 밖 고속도로 : 경사 1.4배(최대 8%) · 높이 자리 32%→10% (고가 덜 뜨게)
   const HW=['western','ridge','east','coast','pacific','north'].includes(id)&&!span,limit0=limit;if(HW)limit=Math.min(.08,limit*1.4);
   const points=profilePoints(waypoints).map(([x,z],i,array)=>{

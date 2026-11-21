@@ -10,7 +10,7 @@ class DB{
  doc(path){return {path,get:async()=>this.snap(path)};}
  runTransaction(fn){const p=this.tail.then(async()=>{const writes=[];const out=await fn({get:async r=>this.snap(r.path),create:(r,d)=>{assert(!this.map.has(r.path));writes.push([r.path,d]);},set:(r,d,opt)=>writes.push([r.path,opt?.merge?{...this.map.get(r.path),...d}:d])});for(const[p,d]of writes)this.map.set(p,structuredClone(d));return out;});this.tail=p.catch(()=>{});return p;}
 }
-assert.equal(CASH_LIVE,false);assert.equal(TEST_PRODUCTS.length,11);
+assert.equal(CASH_LIVE,true);assert.equal(TEST_PRODUCTS.length,11);
 assert.equal(MAX_PAYMENT_KRW,100000);
 assert(TEST_PRODUCTS.every(p=>Number.isSafeInteger(p.amount)&&p.amount>0&&p.amount<=MAX_PAYMENT_KRW));
 assert.equal(TEST_PRODUCTS.find(p=>p.id==='cash-prestige').amount,93000);

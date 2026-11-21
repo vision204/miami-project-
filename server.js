@@ -38,7 +38,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD='golf-20261120-1';
+const BUILD='nwgolf-20261120-1';
 // const BUILD_PREV13 = 'nw-public-20261119-1';   // 2026-11-19 : 위치 올려 보내기 32바이트 묶음(upBin) 추가
 // const BUILD_PREV12 = 'new-cars-20261118-1';
 // const BUILD_PREV11 = 'fish-mma-20261118-1';
