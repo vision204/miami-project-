@@ -58,8 +58,8 @@ export class LivePayments{
   }
   if(data?.action==='history'){
    const prefix=uid+':';if(data.before!==undefined&&(typeof data.before!=='string'||!data.before.startsWith(prefix)||data.before.length>210))fail('invalid-history-cursor','내역 요청을 확인해 주세요.',400);
-   const rows=await this.db.collection('paymentOrders').where('ownerPaidKey','>=',prefix).where('ownerPaidKey','<',data.before||prefix+'\uffff').orderBy('ownerPaidKey','desc').limit(50).get(),a=(await this.db.doc('economyAccounts/'+uid).get()).data();if(a)sweepCommerce(a,this.now());const orders=rows.docs.map(d=>d.data()).filter(o=>o.uid===uid);
-   return {mode:'live',homeChoices:this.catalog.homes.filter(h=>/-penthouse-/.test(h.id)&&h.price>=7000000&&h.price<=10000000).map(h=>({id:h.id,price:h.price})),nextCursor:orders.length===50?orders.at(-1).ownerPaidKey:null,orders:orders.map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,createdAt:o.createdAt,paidAt:o.fulfilledAt||null,validUntil:o.validUntil||null,state:o.state,refundState:o.refundState||null,method:o.method||null,lastError:['CONFIRMING','PAYMENT_REVIEW','FAILED'].includes(o.state)?o.lastError?.message||null:null,grant:publicCommerceLot(a?.commerce?.lots?.[o.id])}))};
+   const rows=await this.db.collection('paymentOrders').where('ownerPaidKey','>=',prefix).where('ownerPaidKey','<',data.before||prefix+'\uffff').orderBy('ownerPaidKey','desc').limit(50).get(),a=(await this.db.doc('economyAccounts/'+uid).get()).data();if(a)sweepCommerce(a,this.now());const raw=rows.docs.map(d=>d.data()).filter(o=>o.uid===uid),now=this.now(),orders=raw.filter(o=>o.state!=='CREATED'&&!(o.state==='FAILED'&&(!o.lastError||o.lastError.code==='review-closed'||now-o.lastError.at>86400000)));   // 2026-11-21 : 결제까지 가지 않은 주문은 숨김 (방금 거절된 결제만 하루 동안 이유와 함께 보임)
+   return {mode:'live',homeChoices:this.catalog.homes.filter(h=>/-penthouse-/.test(h.id)&&h.price>=7000000&&h.price<=10000000).map(h=>({id:h.id,price:h.price})),nextCursor:raw.length===50?raw.at(-1).ownerPaidKey:null,orders:orders.map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,createdAt:o.createdAt,paidAt:o.fulfilledAt||null,validUntil:o.validUntil||null,state:o.state,refundState:o.refundState||null,method:o.method||null,lastError:['CONFIRMING','PAYMENT_REVIEW','FAILED'].includes(o.state)?o.lastError?.message||null:null,grant:publicCommerceLot(a?.commerce?.lots?.[o.id])}))};
   }
   if(data?.action==='create'){
    this.authorizeNew(uid);if(!/^[\w-]{16,80}$/.test(data.requestId||''))fail('invalid-request-id','주문 식별자를 확인해 주세요.',400);
@@ -156,8 +156,24 @@ export class LivePayments{
    await this.db.runTransaction(async tx=>{const s=await tx.get(ref),r=s.data();if(r?.lease!==lease||r.state!=='PROCESSING')return;const review=['live-payment-mismatch','refund-state-review','refund-hold-review'].includes(e?.code)||r.attempts>=8;tx.set(ref,{state:review?'REVIEW_REQUIRED':'RETRY',reviewReason:review?'provider-or-ledger-review':null,nextAttemptAt:review?NEVER:this.now()+Math.min(300000,5000*2**r.attempts)},{merge:true});if(review)tx.set(this.db.doc('paymentOrders/'+id),{state:'REFUND_REVIEW',refundState:'REVIEW_REQUIRED'},{merge:true});});
   }
  }
+ // 2026-11-21 : '승인 상태 확인 필요(PAYMENT_REVIEW)' 로 멈춘 주문을 10분마다 토스에 다시 물어 정리한다.
+ //  · 토스에서 승인 안 됨(만료·중단·취소) 또는 1시간 지나도 토스에 없는 결제 → FAILED (청구 없음) + 1회 구매 자리 풀기
+ //  · 토스에서 승인 완료(DONE) → CONFIRMING 으로 돌려 바로 지급 (청구됐는데 못 받은 경우 복구)
+ async sweepReview(){
+  const rows=await this.db.collection('paymentOrders').where('state','==','PAYMENT_REVIEW').limit(20).get();
+  for(const d of rows.docs){const o=d.data();if(o.mode!=='live'||o.mid!==this.config.mid)continue;const refs=this.refs(o.id,o.uid),onceRef=this.db.doc('paymentPackageClaims/'+digest(o.uid+':'+o.productId));
+   let p=null,gone=false;if(o.paymentKey){try{p=await this.provider(encodeURIComponent(o.paymentKey));}catch(e){gone=e?.providerCode==='NOT_FOUND_PAYMENT'&&this.now()-o.createdAt>3600000;if(!gone)continue;}}else gone=this.now()-o.createdAt>3600000;
+   const done=p&&p.status==='DONE'&&p.orderId===o.id&&p.totalAmount===o.amount,closed=gone||p&&['ABORTED','EXPIRED','CANCELED'].includes(p.status);
+   if(!done&&!closed)continue;
+   await this.db.runTransaction(async tx=>{const [s,r,once]=await Promise.all([tx.get(refs.order),tx.get(refs.receipt),o.once?tx.get(onceRef):Promise.resolve(null)]);if(r.exists||s.data()?.state!=='PAYMENT_REVIEW')return;
+    if(done)tx.set(refs.order,{state:'CONFIRMING',paymentChecks:0,nextPaymentCheckAt:this.now()},{merge:true});
+    else{tx.set(refs.order,{state:'FAILED',nextPaymentCheckAt:NEVER,lastError:{code:'review-closed',provider:p?.status||'NOT_FOUND',message:'결제가 승인되지 않아 주문을 닫았어요.',at:this.now()}},{merge:true});if(o.once&&once?.data()?.orderId===o.id)tx.set(onceRef,{active:false},{merge:true});}});
+   console.warn('[payment-live] 확인 필요 주문 정리',JSON.stringify({order:o.id,product:o.productId,result:done?'paid → 지급 재시도':'unpaid → FAILED',status:p?.status||'NOT_FOUND'}));
+  }
+ }
  async tick(){
   if(this.busy||!this.config.configured)return;this.busy=true;try{
+   if(!(this.now()<this.nextSweep)){this.nextSweep=this.now()+600000;await this.sweepReview().catch(e=>console.warn('[payment-live] 확인 필요 주문 정리 실패',String(e?.message||e)));}
    const refunds=await this.db.collection('paymentRefunds').where('nextAttemptAt','<=',this.now()).limit(10).get();await Promise.allSettled(refunds.docs.map(d=>this.processRefund(d.id||d.ref.path.split('/').at(-1))));
    const orders=await this.db.collection('paymentOrders').where('nextPaymentCheckAt','<=',this.now()).limit(10).get();
    for(const d of orders.docs){const o=d.data();if(o.state!=='CONFIRMING'||!o.paymentKey)continue;try{await this.confirm(o,{paymentKey:o.paymentKey,amount:o.amount},{recover:true});}catch(e){

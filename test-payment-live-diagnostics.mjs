@@ -39,4 +39,20 @@ const ok=s=>console.log('PASS '+s);
 { // MID 불일치는 어느 항목인지 로그
  const s=setup(),o=await s.order('cash-starter',{mId:'other-mid'});logs.length=0;await assert.rejects(()=>s.confirm(o),e=>e.code==='live-payment-mismatch'&&/mId/.test(e.message));assert(logs.some(l=>l.includes('"bad":["mId"]')&&l.includes('other-mid')));assert.equal(s.doc(o).state,'CONFIRMING');ok('mismatch names the field in logs and message');
 }
+{ // 확인 필요(PAYMENT_REVIEW)로 멈춘 1회 패키지 → 10분 정리에서 토스 만료 확인 → FAILED + 1회 구매 자리 풀림 → 다시 구매 가능, 내역에서 숨김
+ const s=setup(),o=await s.order('pack-breach');s.failNext();await assert.rejects(()=>s.confirm(o));
+ s.db.map.set('paymentOrders/'+o.id,{...s.doc(o),state:'PAYMENT_REVIEW',nextPaymentCheckAt:8000000000000000});s.payments.get(o.key).status='EXPIRED';
+ let h=await s.live.execute(uid,{action:'history'});assert.equal(h.orders.length,1);
+ clock+=3600000;await s.live.tick();assert.equal(s.doc(o).state,'FAILED');
+ h=await s.live.execute(uid,{action:'history'});assert.equal(h.orders.length,0,'unpaid orders hidden');
+ const again=await s.order('pack-breach');assert.equal((await s.confirm(again)).state,'FULFILLED');ok('stuck review order is closed and the one-time package can be bought again');
+}
+{ // 확인 필요인데 토스에서는 승인 완료(DONE) → 다시 지급
+ const s=setup(),o=await s.order('pack-breach-x');s.failNext();await assert.rejects(()=>s.confirm(o));
+ s.payments.get(o.key).status='DONE';s.payments.get(o.key).approvedAt=new Date(clock).toISOString();s.db.map.set('paymentOrders/'+o.id,{...s.doc(o),state:'PAYMENT_REVIEW',nextPaymentCheckAt:8000000000000000});
+ clock+=600001;await s.live.tick();assert.equal(s.doc(o).state,'FULFILLED');ok('paid review order is granted');
+}
+{ // 주문만 만들고 결제 안 한 주문(CREATED)은 내역에 안 보임
+ const s=setup();await s.order();const h=await s.live.execute(uid,{action:'history'});assert.equal(h.orders.length,0);ok('created-only orders are hidden');
+}
 console.warn=warn;console.log('PASS all diagnostics');
