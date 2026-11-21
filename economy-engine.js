@@ -7,7 +7,8 @@ import{RESPAWN_MS as HUNT_RESPAWN,parseAnimal,speciesById}from'./hunting-catalog
 import {CUE_REWARD} from './sports-shared/billiards-rules.js';
 import {AIRPORTS_LAYOUT,airportTerminal,airportDestination} from './airport-layout.js';
 import {taxiCommand} from './leisure-taxi.js';
-import {nwWater,nwRodShopNear,nwRecordRule} from './northwest-economy.js';   // 2026-11-18 미국 대륙 맵 : 낚시 물 · 낚싯대 상점
+import {nwWater,nwRodShopNear,nwRecordRule} from './northwest-economy.js';
+import {passDiscount,passAfterCommand,passClaim,passState,passNoteDiscount} from './battlepass.js';   // 2026-11-21 배틀패스 : 프리미엄 20% 할인 · 활동 XP · 보상   // 2026-11-18 미국 대륙 맵 : 낚시 물 · 낚싯대 상점
 
 export class EconomyError extends Error {
   constructor(code, message, status=400){super(message);this.code=code;this.status=status;}
@@ -20,7 +21,8 @@ const owns=(a,id)=>list(a).includes(id);
 const add=(o,k,id)=>{o[k]=[...new Set([...list(o[k]),id])];};
 const entry=(a,id)=>list(a).find(x=>String(x.id)===String(id))||fail('unknown-item','등록되지 않은 상품입니다.');
 const paint=x=>Number.isInteger(x)&&x>=0&&x<=0xffffff?x:0xffffff;
-const charge=(s,n)=>{if(!money(n))fail('invalid-price','가격을 확인할 수 없어요. 잠시 후 다시 시도해 주세요.',503);if(s.property.cash<n)fail('insufficient-funds','잔액이 부족해요.',409);s.property.cash-=n;return n;};
+let PASS_RATE=0,PASS_SAVED=0;   // 배틀패스 할인율 (applyCommand 한 번 동안만)
+const charge=(s,n)=>{if(PASS_RATE>0&&money(n)&&n>0){const d=n-Math.floor(n*(1-PASS_RATE));PASS_SAVED+=d;n-=d;}if(!money(n))fail('invalid-price','가격을 확인할 수 없어요. 잠시 후 다시 시도해 주세요.',503);if(s.property.cash<n)fail('insufficient-funds','잔액이 부족해요.',409);s.property.cash-=n;return n;};
 const credit=(s,n)=>{if(!money(n)||!money(s.property.cash+n))fail('balance-overflow','잔액 한도를 초과합니다.');s.property.cash+=n;};
 // 출석 보상표 (2026-10-18) : 1일차 $100,000 + 로열 볼트(영웅 · 레전더리) 뽑기권 2장 · 2~7일차 $20,000~$70,000 · 7일 연속 출석하면 7일차 $770,000
 // 스킨 = 총 1개 (2026-10-18) : 스킨 1장은 총 1자루에만 영구히 입힌다 · 중복은 장수(stock)로 쌓이고 1장씩 팔 수 있다 (등급별 소액)
@@ -80,6 +82,7 @@ export function tuningCost(o,n,P){let v=0;const a=o.t||{},b=n.t||{};if(n.c!==o.c
 export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID,roll=n=>randomInt(n),plan=null,proof=null,huntProof=null,cueProof=null,heistProof=null,fishingProof=null,coupons={},observation=null}={}){
  if(!account||account.schema!==1)fail('invalid-account','계정 정보를 불러올 수 없습니다.',503);
  const s=copy(account),p=s.property;let spent=0,result={},flightSave=null,taxiPosition=null;
+ PASS_RATE=passDiscount(s,cmd?.type,now);PASS_SAVED=0;
  if(!cmd||typeof cmd.type!=='string')fail('invalid-command','거래 종류를 확인해 주세요.');
  if(s.cityTaxi?.pending&&['flight.board','job.start','heist.start','fishing.start','vehicle.use'].includes(cmd.type))fail('taxi-pending','택시 도착을 먼저 확인해 주세요.',409);
  switch(cmd.type){
@@ -215,8 +218,11 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
  case 'buy.heal':spent=charge(s,catalog.healPrice);break;
  case 'buy.rental':spent=charge(s,entry(catalog.rentals,cmd.id).fee);break;
  case 'buy.fuel':{const a=asset(p,cmd.asset),K=entry(catalog.vehicles,a.r.k);if(!K.fuel)fail('unknown-item','주유할 수 없는 차량입니다.');const have=Number.isFinite(a.r.f)?a.r.f:K.fuel.capacity,amount=cmd.amount==='full'?K.fuel.capacity:cmd.amount;if(!Number.isFinite(amount)||amount<0)fail('invalid-fuel','주유량을 확인해 주세요.');const liters=Math.min(K.fuel.capacity-have,amount);spent=charge(s,Math.round(liters*20));a.r.f=have+liters;result={liters,cost:spent,capacity:K.fuel.capacity};break;}
+ case 'pass.claim':result=passClaim(s,cmd,catalog,now,{credit,uuid});break;
+ case 'pass.sync':passState(s,now);result={pass:s.pass||null};break;
  default:fail('unsupported-command','지금은 이용할 수 없어요.');
  }
+ if(PASS_SAVED>0)passNoteDiscount(s,PASS_SAVED,now);const passXp=passAfterCommand(s,cmd,result,spent,now);if(passXp)result={...result,passXp};if(PASS_SAVED>0)result={...result,passSaved:PASS_SAVED};PASS_RATE=0;PASS_SAVED=0;
  s.version++;s.updatedAt=now;return {account:s,result:{...result,spent},...(flightSave?{save:flightSave}:{}),...(taxiPosition?{position:taxiPosition}:{})};
 }
 

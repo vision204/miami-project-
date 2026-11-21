@@ -54,7 +54,7 @@ assert.equal(liveConfiguration({}).approvalEnabled,false);assert.equal(liveConfi
  const h=catalog.homes.find(h=>h.price===2200);assert(h);await s.command({type:'buy.home',id:h.id});assert.equal(s.account().commerce.lots[o.id].remaining,4000000-2200);assert.equal(s.account().property.cash,4005000-2200);
  const r=await s.live.execute(uid,{action:'refund',orderId:o.id,requestId:'refund_usage_fixture_0001',reason:'unused'});assert.equal(r.refund.state,'REVIEW_REQUIRED');assert.equal(s.cancels.size,0);passed('atomic once-only grant, real economy spend and used-order review');
 }
-for(const product of LIVE_PRODUCTS){
+for(const product of LIVE_PRODUCTS.filter(p=>!p.season)){
  const s=setup(),o=await s.create(product.id);await s.accept(o);await s.confirm(o);const a=s.account();assert.equal(a.property.cash,5000+product.units);assert.equal(a.commerce.lots[o.id].items.length,product.items.length);assert.equal(a.commerce.lots[o.id].validUntil,Date.parse('2027-10-30T10:00:00Z'));
  if(product.once){const q=await s.create(product.id);await s.accept(q);await assert.rejects(()=>s.confirm(q),e=>e.code==='package-already-claimed');assert.equal(s.approvals.size,1);}
  const r=await s.live.execute(uid,{action:'refund',orderId:o.id,requestId:'refund_unused_fixture_0001',reason:'unused'});assert.equal(r.refund.state,'REFUNDED');assert.equal(s.account().property.cash,5000);assert.equal(s.account().commerce.lots[o.id].refunded,true);

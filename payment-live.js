@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
 import {EconomyError} from './economy-engine.js';
 import {paymentExpiresAt} from './payment-validity.js';
+import {PASS_PRODUCTS,passSeason} from './battlepass.js';
 import {grantCommerce,sweepCommerce,commerceEligibility,holdCommerce,finishCommerceRefund,publicCommerceLot} from './payment-commerce.js';
 const digest=s=>createHash('sha256').update(s).digest('hex'),NEVER=8000000000000000;
 const fail=(code,message,status=409)=>{throw new EconomyError(code,message,status);};
 export const LIVE_POLICY_VERSION='2026-10-30-paid-v1';
-export const LIVE_PRODUCTS=Object.freeze(JSON.parse(fs.readFileSync(new URL('./payment-catalog.json',import.meta.url))).products.map(p=>Object.freeze(p)));
+export const LIVE_PRODUCTS=Object.freeze([...JSON.parse(fs.readFileSync(new URL('./payment-catalog.json',import.meta.url))).products.map(p=>Object.freeze(p)),...PASS_PRODUCTS]);   // 2026-11-21 : 배틀패스 프리미엄(시즌 상품)은 시즌 중에만 판매
 const methods=new Set(['카드','간편결제','문화상품권','도서문화상품권','게임문화상품권']);
 const gifts=new Set(['문화상품권','도서문화상품권','게임문화상품권']);
 export function liveConfiguration(env=process.env){
@@ -64,6 +65,7 @@ export class LivePayments{
   if(data?.action==='create'){
    this.authorizeNew(uid);if(!/^[\w-]{16,80}$/.test(data.requestId||''))fail('invalid-request-id','주문 식별자를 확인해 주세요.',400);
    const p=LIVE_PRODUCTS.find(p=>p.id===data.productId);if(!p||p.amount<1||p.amount>100000||!Number.isSafeInteger(p.amount))fail('invalid-product','구매할 수 없는 상품입니다.',400);
+   if(p.season&&passSeason(this.now())?.id!==p.season)fail('pass-not-on-sale','이 배틀패스는 시즌 기간에만 살 수 있어요.',409);
    const id='live_'+digest(uid+':'+data.requestId).slice(0,48),refs=this.refs(id,uid),now=this.now();
    return this.db.runTransaction(async tx=>{const [s,a,control]=await Promise.all([tx.get(refs.order),tx.get(refs.account),tx.get(refs.control)]);if(control.data()?.lockedVersion!==1||!a.exists)fail('live-account-required','게임 계정 연결을 먼저 확인해 주세요.');
     if(s.exists){const o=s.data();if(o.uid!==uid||o.productId!==p.id)fail('idempotency-conflict','다른 주문으로 사용한 요청입니다.');return {id:o.id,name:o.name,amount:o.amount,state:o.state,mode:'live'};}
