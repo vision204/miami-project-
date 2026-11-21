@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {EconomyError} from './economy-engine.js';
 
-export const SVR_EDITION=Object.freeze({id:'pack-svr-67',vehicle:'tz_lanza',limit:67,krw:18000,currency:'KRW',cash:10000000});
+export const SVR_EDITION=Object.freeze({id:'pack-svr-67',vehicle:'tz_lanza',limit:67,krw:15000,currency:'KRW',cash:10000000});
 const fail=(code,message)=>{throw new EconomyError(code,message,409);};
 const identity=s=>typeof s==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(s);
 const orderKey=id=>createHash('sha256').update(id).digest('hex');
@@ -33,7 +33,7 @@ export class LimitedEditions {
    if(owner.exists)fail('already-owned','한정판 패키지는 계정당 1회입니다.');
    const holds={...(s.holds||{})};
    if(Object.keys(s.slots||{}).length+Object.keys(holds).length>=67)fail('sold-out','전 서버 67대가 모두 예약 또는 판매되었습니다.');
-   const out={uid,orderId,product:SVR_EDITION.id,amount:18000,currency:'KRW',serial:null,status:'reserved',createdAt:this.now()};
+   const out={uid,orderId,product:SVR_EDITION.id,amount:SVR_EDITION.krw,currency:'KRW',serial:null,status:'reserved',createdAt:this.now()};
    holds[r.key]={uid,orderId,at:this.now()};
    tx.update(r.stock,{holds});tx.create(r.order,out);tx.create(r.owner,{orderId,serial:null,status:'reserved'});return out;
   });
@@ -46,7 +46,7 @@ export class LimitedEditions {
    if(!o||o.uid!==uid)fail('order-owner','주문 계정이 일치하지 않습니다.');
    if(o.status==='fulfilled')return {serial:o.serial,replayed:true};
    if(o.status!=='reserved'||!owner.exists||owner.data().orderId!==orderId)fail('order-state','유효한 예약이 아닙니다.');
-   if(!p||p.status!=='verified'||p.uid!==uid||p.product!==SVR_EDITION.id||p.amount!==18000||p.currency!=='KRW'||p.orderId!==orderId||!p.providerPaymentId)fail('payment-unverified','결제 확인이 필요합니다.');
+   if(!p||p.status!=='verified'||p.uid!==uid||p.product!==SVR_EDITION.id||p.amount!==SVR_EDITION.krw||p.currency!=='KRW'||p.orderId!==orderId||!p.providerPaymentId)fail('payment-unverified','결제 확인이 필요합니다.');
    const paymentClaim=this.db.doc('limitedPaymentClaims/'+orderKey(p.providerPaymentId));
    if((await tx.get(paymentClaim)).exists)fail('payment-reused','이미 지급된 결제입니다.');
    if(s?.ready!==true||s.auditComplete!==true||s.limit!==67)fail('stock-conflict','한정판 예약 수량을 확인해 주세요.');

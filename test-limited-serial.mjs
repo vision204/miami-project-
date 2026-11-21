@@ -11,7 +11,7 @@ const key=id=>createHash('sha256').update(id).digest('hex');
 const L=new LimitedEditions(db,{now:()=>1});
 store.set('limitedEditions/pack-svr-67',{ready:true,limit:67,auditComplete:true,slots:{}});
 const acct=uid=>store.set('economyAccounts/'+uid,{version:1,property:{cash:0,over:[]}});
-const pay=(uid,o)=>store.set('verifiedPayments/'+key(o),{status:'verified',uid,product:'pack-svr-67',amount:18000,currency:'KRW',orderId:o,providerPaymentId:'p-'+o});
+const pay=(uid,o)=>store.set('verifiedPayments/'+key(o),{status:'verified',uid,product:'pack-svr-67',amount:15000,currency:'KRW',orderId:o,providerPaymentId:'p-'+o});
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1;}else console.log('ok',m);};
 for(const u of ['A','B','C'])acct(u);
 const ra=await L.reserve('A','oA'),rb=await L.reserve('B','oB'),rc=await L.reserve('C','oC');

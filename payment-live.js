@@ -15,10 +15,23 @@ export function liveConfiguration(env=process.env){
  const configured=/^live_gsk_[\w-]+$/.test(secret)&&/^live_gck_[\w-]+$/.test(client)&&/^[\w-]{1,40}$/.test(mid);
  return {configured,secret,client,mid,checkoutEnabled:configured&&env.TOSS_LIVE_CHECKOUT_ENABLED==='1',approvalEnabled:configured&&env.TOSS_LIVE_APPROVAL_ENABLED==='1',publicEnabled:env.TOSS_LIVE_PUBLIC_ENABLED==='1'&&env.TOSS_LIVE_SALES_READY==='1',users:(env.TOSS_LIVE_UIDS||'').split(',').map(x=>x.trim()).filter(Boolean),giftEnabled:env.TOSS_LIVE_GIFT_ENABLED==='1'};
 }
-export function verifyLivePayment(p,o,key,{complete=true}={}){
- if(!p||p.mId!==o.mid||p.orderId!==o.id||p.paymentKey!==key||p.totalAmount!==o.amount||p.currency!=='KRW'||!['ABORTED','EXPIRED'].includes(p.status)&&!methods.has(p.method))fail('live-payment-mismatch','결제 정보 확인이 필요합니다.');
- if(complete&&(p.status!=='DONE'||p.balanceAmount!==o.amount||p.cancels?.length))fail('live-payment-state','결제 승인 상태를 확인해야 합니다.');
+// 2026-11-21 : 어느 항목이 달랐는지 서버 로그에 남긴다 (결제키·비밀키는 남기지 않음). 승인 전(IN_PROGRESS)에는 결제수단이 비어 있어도 된다.
+export function livePaymentProblems(p,o,key,{complete=true}={}){
+ if(!p)return ['payment'];const bad=[];
+ if(p.mId!==o.mid)bad.push('mId');if(p.orderId!==o.id)bad.push('orderId');if(p.paymentKey!==key)bad.push('paymentKey');if(p.totalAmount!==o.amount)bad.push('amount');if(p.currency!=='KRW')bad.push('currency');
+ if(!['ABORTED','EXPIRED','CANCELED'].includes(p.status)&&!(p.method==null&&p.status==='IN_PROGRESS'&&!complete)&&!methods.has(p.method))bad.push('method');
+ return bad;
 }
+const logInfo=(p,o)=>({order:o?.id,status:p?.status,method:p?.method??null,mId:p?.mId??null,expectMid:o?.mid,amount:p?.totalAmount??null,expectAmount:o?.amount});
+export function verifyLivePayment(p,o,key,{complete=true}={}){
+ const bad=livePaymentProblems(p,o,key,{complete});
+ if(bad.length){console.warn('[payment-live] 결제 정보 불일치',JSON.stringify({bad,...logInfo(p,o)}));
+  if(bad.length===1&&bad[0]==='method')fail('live-method-unsupported','이 결제수단('+(p.method||'알 수 없음')+')은 아직 지원하지 않아요. 카드나 간편결제로 다시 결제해 주세요.');
+  fail('live-payment-mismatch','결제 정보 확인이 필요합니다. ('+bad.join(', ')+')');}
+ if(complete&&(p.status!=='DONE'||p.balanceAmount!==o.amount||p.cancels?.length)){console.warn('[payment-live] 승인 상태 확인 필요',JSON.stringify({...logInfo(p,o),balance:p.balanceAmount,cancels:p.cancels?.length||0}));fail('live-payment-state','결제 승인 상태를 확인해야 합니다.');}
+}
+// 토스가 확정적으로 거절한 승인 (다시 시도해도 같은 결과) — 주문을 FAILED 로 닫는다. 그 외(일시 오류)는 CONFIRMING 으로 두고 재확인한다.
+const RETRYABLE_PROVIDER=new Set(['ALREADY_PROCESSED_PAYMENT','PROVIDER_ERROR','FAILED_INTERNAL_SYSTEM_PROCESSING','FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING','UNKNOWN_PAYMENT_ERROR','FAILED_CARD_COMPANY_RESPONSE','INVALID_API_KEY','UNAUTHORIZED_KEY','FORBIDDEN_REQUEST','NOT_FOUND_PAYMENT']);
 function fullCancel(p,amount){return p.status==='CANCELED'&&p.balanceAmount===0&&Array.isArray(p.cancels)&&p.cancels.length&&p.cancels.every(c=>c.cancelStatus==='DONE')&&p.cancels.reduce((n,c)=>n+c.cancelAmount,0)===amount;}
 const safeRefund=r=>r?{id:r.id,orderId:r.orderId,state:r.state,amount:r.amount,requestedAt:r.requestedAt,completedAt:r.completedAt||null,reviewReason:r.reviewReason||null}:null;
 export class LivePayments{
@@ -31,8 +44,10 @@ export class LivePayments{
  }
  async provider(route,body,id){
   if(!this.config.configured||!/^live_gsk_/.test(this.config.secret))fail('live-key-required','운영 결제 연결을 확인해 주세요.',503);
-  let r;try{r=await this.fetcher('https://api.tosspayments.com/v1/payments/'+route,{method:body?'POST':'GET',headers:{Authorization:'Basic '+Buffer.from(this.config.secret+':').toString('base64'),'Content-Type':'application/json',...(id?{'Idempotency-Key':id}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(15000)});}catch{fail('live-provider-unavailable','결제 상태를 확인 중입니다. 구매 내역에서 다시 확인해 주세요.',503);}
-  if(!r.ok)fail('live-provider-rejected','결제대행사에서 요청을 완료하지 못했어요. 승인 상태를 다시 확인해 주세요.',502);
+  let r;try{r=await this.fetcher('https://api.tosspayments.com/v1/payments/'+route,{method:body?'POST':'GET',headers:{Authorization:'Basic '+Buffer.from(this.config.secret+':').toString('base64'),'Content-Type':'application/json',...(id?{'Idempotency-Key':id}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(15000)});}catch(e){console.warn('[payment-live] 토스 연결 실패',String(e?.name||e));fail('live-provider-unavailable','결제 상태를 확인 중입니다. 구매 내역에서 다시 확인해 주세요.',503);}
+  if(!r.ok){let info={};try{info=await r.json();}catch{}const kind=route==='confirm'?'confirm':route.endsWith('/cancel')?'cancel':'lookup';
+   console.warn('[payment-live] 토스 요청 거절',JSON.stringify({kind,http:r.status,code:info?.code||null,message:info?.message||null}));
+   const e=new EconomyError('live-provider-rejected',info?.message?'결제대행사 응답: '+info.message:'결제대행사에서 요청을 완료하지 못했어요. 승인 상태를 다시 확인해 주세요.',502);e.providerCode=info?.code||null;e.providerStatus=r.status;e.providerKind=kind;throw e;}
   try{return await r.json();}catch{fail('live-provider-unavailable','결제 응답을 확인하지 못했어요.',503);}
  }
  async execute(uid,data){
@@ -44,7 +59,7 @@ export class LivePayments{
   if(data?.action==='history'){
    const prefix=uid+':';if(data.before!==undefined&&(typeof data.before!=='string'||!data.before.startsWith(prefix)||data.before.length>210))fail('invalid-history-cursor','내역 요청을 확인해 주세요.',400);
    const rows=await this.db.collection('paymentOrders').where('ownerPaidKey','>=',prefix).where('ownerPaidKey','<',data.before||prefix+'\uffff').orderBy('ownerPaidKey','desc').limit(50).get(),a=(await this.db.doc('economyAccounts/'+uid).get()).data();if(a)sweepCommerce(a,this.now());const orders=rows.docs.map(d=>d.data()).filter(o=>o.uid===uid);
-   return {mode:'live',homeChoices:this.catalog.homes.filter(h=>/-penthouse-/.test(h.id)&&h.price>=7000000&&h.price<=10000000).map(h=>({id:h.id,price:h.price})),nextCursor:orders.length===50?orders.at(-1).ownerPaidKey:null,orders:orders.map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,createdAt:o.createdAt,paidAt:o.fulfilledAt||null,validUntil:o.validUntil||null,state:o.state,refundState:o.refundState||null,method:o.method||null,grant:publicCommerceLot(a?.commerce?.lots?.[o.id])}))};
+   return {mode:'live',homeChoices:this.catalog.homes.filter(h=>/-penthouse-/.test(h.id)&&h.price>=7000000&&h.price<=10000000).map(h=>({id:h.id,price:h.price})),nextCursor:orders.length===50?orders.at(-1).ownerPaidKey:null,orders:orders.map(o=>({id:o.id,name:o.name,amount:o.amount,units:o.units,createdAt:o.createdAt,paidAt:o.fulfilledAt||null,validUntil:o.validUntil||null,state:o.state,refundState:o.refundState||null,method:o.method||null,lastError:['CONFIRMING','PAYMENT_REVIEW','FAILED'].includes(o.state)?o.lastError?.message||null:null,grant:publicCommerceLot(a?.commerce?.lots?.[o.id])}))};
   }
   if(data?.action==='create'){
    this.authorizeNew(uid);if(!/^[\w-]{16,80}$/.test(data.requestId||''))fail('invalid-request-id','주문 식별자를 확인해 주세요.',400);
@@ -81,17 +96,30 @@ export class LivePayments{
    tx.set(refs.order,{paymentKey:key,state:'CONFIRMING',nextPaymentCheckAt:now+60000},{merge:true});if(!c.exists)tx.create(keyRef,{uid:o.uid,orderId:o.id});
   });
   const current=(await refs.order.get()).data();if(['FULFILLED','REFUND_PENDING','REFUND_REVIEW','REFUNDED'].includes(current.state))return {state:current.state,orderId:current.id,mode:'live',replayed:true};
+  try{return await this.approve(order,key,{recover});}
+  catch(e){
+   const definitive=e?.code==='live-method-unsupported'||e?.code==='gift-review-pending'||e?.code==='live-provider-rejected'&&e.providerKind==='confirm'&&e.providerStatus>=400&&e.providerStatus<500&&!RETRYABLE_PROVIDER.has(e.providerCode);
+   const onceRef=this.db.doc('paymentPackageClaims/'+digest(order.uid+':'+order.productId));
+   try{await this.db.runTransaction(async tx=>{const [s,r,once]=await Promise.all([tx.get(refs.order),tx.get(refs.receipt),order.once?tx.get(onceRef):Promise.resolve(null)]);if(r.exists||s.data()?.state!=='CONFIRMING')return;
+    tx.set(refs.order,{lastError:{code:e?.code||'error',provider:e?.providerCode||null,message:String(e?.message||'').slice(0,200),at:this.now()},...(definitive?{state:'FAILED',nextPaymentCheckAt:NEVER}:{})},{merge:true});
+    if(definitive&&order.once&&once?.data()?.orderId===order.id)tx.set(onceRef,{active:false},{merge:true});});}catch{}
+   if(definitive)console.warn('[payment-live] 승인 실패로 주문 종료',JSON.stringify({order:order.id,code:e?.code,provider:e?.providerCode||null}));
+   throw e;
+  }
+ }
+ async approve(order,key,{recover=false}={}){
+  const refs=this.refs(order.id,order.uid),onceRef=this.db.doc('paymentPackageClaims/'+digest(order.uid+':'+order.productId));
   let p=await this.provider(encodeURIComponent(key));verifyLivePayment(p,order,key,{complete:false});
   if(['ABORTED','EXPIRED','CANCELED'].includes(p.status)){
    await this.db.runTransaction(async tx=>{const [s,r,once]=await Promise.all([tx.get(refs.order),tx.get(refs.receipt),order.once?tx.get(onceRef):Promise.resolve(null)]);if(r.exists||s.data()?.state!=='CONFIRMING')return;tx.set(refs.order,{state:'FAILED',nextPaymentCheckAt:NEVER},{merge:true});if(order.once&&once?.data()?.orderId===order.id)tx.set(onceRef,{active:false},{merge:true});});
    fail('live-payment-not-approved','결제 승인이 완료되지 않았어요. 새 주문으로 다시 시도해 주세요.');
   }
   if(p.status==='IN_PROGRESS'){
-   if(recover||!this.config.approvalEnabled)fail('live-approval-paused','현재는 운영 결제창 확인 단계예요. 실제 결제 승인은 아직 열리지 않았어요.',409);
+   if(!this.config.approvalEnabled)fail('live-approval-paused','현재는 운영 결제창 확인 단계예요. 실제 결제 승인은 아직 열리지 않았어요.',409);
    if(gifts.has(p.method)&&!this.config.giftEnabled)fail('gift-review-pending','상품권 결제는 별도 심사 완료 후 이용할 수 있어요.');
    p=await this.provider('confirm',{paymentKey:key,orderId:order.id,amount:order.amount},digest('smm2-live-confirm:'+order.id));
   }
-  verifyLivePayment(p,order,key);const paidAt=Date.parse(p.approvedAt);if(!Number.isFinite(paidAt)||paidAt>this.now()+300000||paidAt<order.createdAt-300000)fail('live-payment-date','승인 일시를 확인해야 합니다.');
+  verifyLivePayment(p,order,key);const paidAt=Date.parse(p.approvedAt);console.info('[payment-live] 승인 완료',JSON.stringify({order:order.id,product:order.productId,amount:order.amount,method:p.method,recover}));if(!Number.isFinite(paidAt)||paidAt>this.now()+300000||paidAt<order.createdAt-300000)fail('live-payment-date','승인 일시를 확인해야 합니다.');
   // The Korean storefront states calendar months in KST, including leap-day clamping.
   const validUntil=paymentExpiresAt(paidAt+9*3600000,order.validityMonths)-9*3600000;
   const out=await this.db.runTransaction(async tx=>{
