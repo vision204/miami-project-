@@ -38,7 +38,7 @@ const PORT = process.env.PORT || 8080;
 /* 배포된 서버가 어느 버전인지 확인하는 표시.
    https://<주소>/stats 를 열어 "pvp":true 가 보이면 PvP 서버가 돌고 있는 것이다.
    안 보이면 GitHub 의 server.js 가 아직 옛 파일이거나 Render 가 재배포를 안 한 것이다. */
-const BUILD='jet-20261126-1';   // 이전 bp-20261121-1 · 2026-11-26 폭탄 투하 지점을 기체 앞쪽으로 (bombing.js lead)   // 2026-11-21 : 배틀패스 시즌 1 (12/1~12/28 · 30단계 · 프리미엄 ₩6,500 = 게임머니 구매 20% 할인 + 보상)
+const BUILD='net-20261126-1';   // 이전 jet-20261126-1 · 2026-11-26 실시간 사건 공유 'ev' (폭발 · 차 파괴 · NPC 넘어짐)   // 이전 bp-20261121-1 · 2026-11-26 폭탄 투하 지점을 기체 앞쪽으로 (bombing.js lead)   // 2026-11-21 : 배틀패스 시즌 1 (12/1~12/28 · 30단계 · 프리미엄 ₩6,500 = 게임머니 구매 20% 할인 + 보상)
 // const BUILD_PREV16 = 'face-20261121-2';   // 2026-11-21 23:30 : 확인 필요 주문 10분 정리(만료 → FAILED · 1회 구매 자리 풀기 / 승인 완료 → 지급), 결제 안 된 주문은 내역에서 숨김
 // const BUILD_PREV15 = 'face-20261121-1';   // 2026-11-21 : 옷장 애니풍 표정 구매 buy.face · 한정판 SVR-67 가격 15,000원 · 실결제 승인 멈춤 진단(토스 거절 사유 기록 · 일시 오류 자동 재승인 · 확정 거절은 FAILED)
 // const BUILD_PREV14 = 'nwgolf-20261120-1';
@@ -224,9 +224,9 @@ wss.on('connection', (ws, req) => {
     if (isBinary){ m = readUpState(buf); if (!m) return; }   // 2026-11-19 : 내 위치(s)를 32바이트 묶음으로 받는다 (JSON 의 약 1/3)
     else { try { m = JSON.parse(buf); } catch { return; } }
     if (!m || typeof m !== 'object') return;
-    if(['warfx','ped','sp','pp','died'].includes(m.t)&&!peer.uid)return;
+    if(['warfx','ped','sp','pp','died','ev'].includes(m.t)&&!peer.uid)return;
 
-    if(aurelisPrivate(peer)&&['hit','warfx','ped','sp','pp','died','bomb','bombnpc','hunt_hit','golf','basket','boxing','cue','speedrace'].includes(m.t))return;
+    if(aurelisPrivate(peer)&&['hit','warfx','ped','sp','pp','died','ev','bomb','bombnpc','hunt_hit','golf','basket','boxing','cue','speedrace'].includes(m.t))return;
     if (m.t === 's' && Array.isArray(m.s) && m.s.length >= 5){
       peer.s = [
         num(m.s[0], -53000, 20000),   // x (2026-11-18 미국 대륙 맵 서쪽 끝 -52,500 까지)
@@ -301,6 +301,18 @@ wss.on('connection', (ws, req) => {
         const target=vec(m.target)&&m.target.every(v=>Math.abs(v)<55000)?m.target:null;
         broadcast(room,{t:'warfx',from:peer.id,phase:'launch',id:m.id,kind:m.kind,o:m.o,d:m.d.map(v=>v/len),target},peer.id);
       } else if(m.phase==='impact') broadcast(room,{t:'warfx',from:peer.id,phase:'impact',id:m.id,o:m.o},peer.id);
+    } else if (m.t === 'ev'){
+      /* 2026-11-26 실시간 사건 공유 (NETEV) : 폭발 · 차 파괴 · NPC 넘어짐. 화면 연출만 전달한다(피해 · 돈은 일으킨 사람 브라우저에서 이미 끝).
+         보이는 거리(broadcastNear)의 사람에게만 · 1초에 20개까지 · 일으킨 사람 900 m 안의 사건만. */
+      if(sports.protected(peer)||economy.heistProtected(peer.uid)||speedRacing.protected(peer))return;
+      if(!peer.ready||(peer.s[7]&128)||!['boom','carx','pedk'].includes(m.k))return;
+      if(!Array.isArray(m.p)||m.p.length!==3||!m.p.every(Number.isFinite))return;
+      if(Math.hypot(m.p[0]-peer.s[0],m.p[2]-peer.s[2])>900)return;
+      if(now-(peer.evWindow||0)>1000){peer.evWindow=now;peer.evCount=0;}
+      if((peer.evCount=(peer.evCount||0)+1)>20)return;
+      const id=Number.isInteger(m.id)&&m.id>=0&&m.id<=4294967295?m.id:null;
+      const d=Array.isArray(m.d)?m.d.slice(0,6).map(v=>Number.isFinite(v)?Math.round(num(v,-1000,1000)*1000)/1000:0):[];
+      broadcastNear(room,peer,{t:'ev',from:peer.id,k:m.k,p:m.p.map(v=>Math.round(v*100)/100),id,d});
     } else if (m.t === 'ped'){
       /* NPC 사망 공유 (2026-10-19) : 화면 연출만 전달한다. 돈·처치 수는 죽인 사람 브라우저에서 이미 끝났고,
          받는 쪽은 같은 번호(결정론적 슬롯)의 NPC 를 쓰러뜨리기만 한다. 가까운 사람에게만 보낸다. */
@@ -435,7 +447,7 @@ function send(ws,obj){
 function broadcast(room, obj, exceptId){
   const msg = JSON.stringify(obj);
   for (const p of room.values())
-    if (p.id !== exceptId && p.ws.readyState === 1 && !(['warfx','ped','sp','pp','dead'].includes(obj.t)&&aurelisPrivate(p))){if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);}
+    if (p.id !== exceptId && p.ws.readyState === 1 && !(['warfx','ped','sp','pp','dead','ev'].includes(obj.t)&&aurelisPrivate(p))){if(p.ws.bufferedAmount>262144)p.ws.close(1008,'slow receiver');else p.ws.send(msg);}
 }
 
 /** 가까운 사람(스냅샷과 같은 범위)에게만 보낸다 */
