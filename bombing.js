@@ -21,7 +21,9 @@ export class Bombing {
   const height=m.o[1]-m.g;if(m.g< -100||m.g>1500||height<R.minAltitude||height>R.maxAltitude)return deny('지면에서 12m 이상 올라가야 해요.');
   if(peer.bombAt!==undefined&&now-peer.bombAt<R.cooldown)return deny('폭탄 재장전 중이에요.');
   if(s.pending.size>=R.maxRoom||[...s.pending.values()].filter(b=>b.from===peer.id).length>=R.maxActive)return deny('앞서 떨어뜨린 폭탄이 낙하 중이에요.');
-  const duration=bombFlight(m.o,m.g)*1000,b={t:'bomb',phase:'launch',id:'b'+(++this.serial),from:peer.id,o:[...m.o],p:[m.o[0],m.g,m.o[2]],at:now,duration,radius:R.radius,fxRange:R.fxView,fxLife:R.fxLife,seed:(Math.imul(this.serial,2654435761)^now)>>>0};peer.bombAt=now;peer.s[7]&=~32;s.pending.set(b.id,b);this.announce(room,b);return true;
+  /* 2026-11-26 : 떨어질 자리를 기체 앞쪽으로 조금 (lead = [dx,dz]). 길이는 기체 속도 × 낙하 시간 × 0.45 + 5 m, 최대 170 m 까지만 */
+  const fall=bombFlight(m.o,m.g),lead=Array.isArray(m.lead)&&m.lead.length===2&&m.lead.every(Number.isFinite)?m.lead:[0,0],lmax=Math.min(170,(peer.s[6]||0)*fall*.45+5),ll=Math.hypot(lead[0],lead[1]),lk=ll>lmax?lmax/ll:1;
+  const duration=fall*1000,b={t:'bomb',phase:'launch',id:'b'+(++this.serial),from:peer.id,o:[...m.o],p:[m.o[0]+lead[0]*lk,m.g,m.o[2]+lead[1]*lk],at:now,duration,radius:R.radius,fxRange:R.fxView,fxLife:R.fxLife,seed:(Math.imul(this.serial,2654435761)^now)>>>0};peer.bombAt=now;peer.s[7]&=~32;s.pending.set(b.id,b);this.announce(room,b);return true;
  }
  tick(rooms){const now=this.now();for(const [room,state]of this.rooms){const peers=[...rooms.values()].find(p=>p===room);if(!peers){this.rooms.delete(room);continue;}
   for(const [id,b]of state.pending){if(!peers.has(b.from)){state.pending.delete(id);this.broadcast(room,{t:'bomb',phase:'cancel',id});continue;}if(now<b.at+b.duration)continue;state.pending.delete(id);const event={t:'bomb',phase:'impact',id,from:b.from,p:b.p,radius:R.radius,at:now,seed:b.seed,fxRange:R.fxView,fxLife:R.fxLife},hit={...event,npcs:new Set(),viewers:new Set()};state.impacts.set(id,hit);this.announce(room,event,hit.viewers);
