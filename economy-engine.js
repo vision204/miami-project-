@@ -3,6 +3,7 @@ import {JOBS,jobPayout,cleanJobSave} from './economy-job-core.js';
 import {TIDE,distance} from './heist-layout.js';
 import{RODS,DOCKS,zoneAt,rollFish,fishById,payout}from'./fishing-catalog.js';
 import {GOLF_SETS} from './golf-items.js';
+import {GOLF_CARTS} from './golf-carts.js';
 import{RESPAWN_MS as HUNT_RESPAWN,parseAnimal,speciesById}from'./hunting-catalog.js';
 import {CUE_REWARD} from './sports-shared/billiards-rules.js';
 import {AIRPORTS_LAYOUT,airportTerminal,airportDestination} from './airport-layout.js';
@@ -65,6 +66,7 @@ export function migrateAccount(legacy,catalog,now=Date.now(),uuid=randomUUID){
  if(!p.starter?.given&&!list(p.homes).length&&!list(p.pent?.owned).length){const k=entry(catalog.vehicles,catalog.starter);p.starter={given:true,car:{a:uuid(),k:k.id,p:0,c:0xf2f2f0,f:k.fuel?.capacity??null}};}
  p.guns=[...new Set(['fists',...list(p.guns)])];
  p.golf={owned:[],equipped:'rental'};
+ p.golfCart={owned:[],equipped:'rental'};
  return {schema:1,version:0,property:p,work:copy(legacy?.work||{}),coupons:copy(legacy?.redeemedCoupons||{}),migratedAt:now,migrationSource:'players-database',updatedAt:now};
 }
 function garage(p,c,id,type){
@@ -160,6 +162,8 @@ export function applyCommand(account,cmd,catalog,{now=Date.now(),uuid=randomUUID
   s.fishing={...f,active:null,last:{id:a.id,catch:caught,reward,at:now}};result={catch:caught,reward};break;
  }
 
+ case 'buy.golfCart':{const q=entry(GOLF_CARTS,cmd.id);p.golfCart??={owned:[],equipped:'rental'};if(owns(p.golfCart.owned,q.id))fail('already-owned','이미 보유한 골프카트입니다.',409);spent=charge(s,q.price);add(p.golfCart,'owned',q.id);p.golfCart.equipped=q.id;break;}
+ case 'equip.golfCart':{p.golfCart??={owned:[],equipped:'rental'};if(cmd.id!=='rental'){entry(GOLF_CARTS,cmd.id);if(!owns(p.golfCart.owned,cmd.id))fail('not-owner','구매한 골프카트만 선택할 수 있어요.',403);}p.golfCart.equipped=cmd.id;break;}
  case 'buy.golf':{const q=entry(GOLF_SETS,cmd.id);p.golf??={owned:[],equipped:'rental'};if(owns(p.golf.owned,q.id))fail('already-owned','이미 보유한 골프채 세트입니다.',409);spent=charge(s,q.price);add(p.golf,'owned',q.id);p.golf.equipped=q.id;break;}
  case 'equip.golf':{p.golf??={owned:[],equipped:'rental'};if(cmd.id!=='rental'){entry(GOLF_SETS,cmd.id);if(!owns(p.golf.owned,cmd.id))fail('not-owner','구매한 골프채만 장착할 수 있습니다.',403);}p.golf.equipped=cmd.id;break;}
  case 'heist.start':{if(typeof cmd.run!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(cmd.run))fail('invalid-heist','작업 식별자가 필요합니다.');if(s.heist?.active||s.work?.active?.expiresAt>now||s.fishing?.active?.expiresAt>now)fail('job-active','진행 중인 작업을 먼저 종료하세요.',409);if(!observation||now-observation.at>1500||observation.car||distance(observation,TIDE.start)>7||Math.abs(observation.y-TIDE.y)>2)fail('heist-location','항구 집결지에서 하차한 뒤 시작하세요.',409);s.heist={...(s.heist||{}),active:{id:cmd.run,type:TIDE.id,startedAt:now}};result={active:s.heist.active};break;}

@@ -6,7 +6,7 @@ const snap=(id,v)=>({id,exists:v!==undefined,data:()=>v&&structuredClone(v)});
 const db={doc:p=>({id:p.split('/')[1],path:p,get:async()=>snap(p.split('/')[1],store.get(p))}),
  runTransaction:async fn=>fn({get:async r=>r.get(),set:(r,v)=>store.set(r.path,structuredClone(v))}),
  collection:c=>{const all=()=>[...store].filter(([k])=>k.startsWith(c+'/')).map(([k,v])=>({id:k.split('/')[1],v}));
-  return {orderBy:(f,dir)=>({limit:n=>({get:async()=>({docs:all().sort((a,b)=>b.v[f]-a.v[f]).slice(0,n).map(d=>snap(d.id,d.v))})})}),
+  return {get:async()=>({docs:all().map(d=>snap(d.id,d.v))}),orderBy:(f,dir)=>({limit:n=>({get:async()=>({docs:all().sort((a,b)=>b.v[f]-a.v[f]).slice(0,n).map(d=>snap(d.id,d.v))})})}),
    where:(f,op,x)=>({count:()=>({get:async()=>({data:()=>({count:all().filter(d=>d.v[f]>x).length})})})})};}};
 let clock=1e12;const sent=[];const R=new GolfRanks(()=>({db}),{send:(ws,m)=>sent.push([ws,m]),now:()=>clock});
 const peer=(uid,name)=>({uid,name,ws:uid,ready:true,stateAt:clock,s:[-1280,2,2995]});

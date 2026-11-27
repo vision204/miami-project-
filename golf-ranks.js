@@ -13,7 +13,7 @@ export const NW_GOLF=[
  {id:'redwood',name:'REDWOOD HOLLOW',x:-35220,z:-15930,r:160,pars:[4,4,3,5,4,5]},
  {id:'dunes',name:'SOLARA DUNES',x:-32381,z:-2321,r:160,pars:[4,3,4,4,3,4]},
 ];
-const POOL={miami:'golfRanks',nw:'nwGolfRanks'};
+const POOL={miami:'golfRanks',nw:'golfRanks'}; // One canonical board; legacy NW documents remain intact.
 export function golfScore(row){
  const holes=row.holes|0;if(holes<=0)return 0;const rounds=holes/3,avgOver=row.over/holes;
  return Math.round((Math.min(rounds,50)*10+Math.max(0,3-avgOver)*100)*10)/10;
@@ -22,6 +22,12 @@ export function golfOrder(a,b){return b.score-a.score||a.over/a.holes-b.over/b.h
 const cleanName=n=>String(n||'플레이어').replace(/[\u0000-\u001f<>]/g,'').slice(0,16)||'플레이어';
 const view=d=>({n:cleanName(d.name),h:d.holes|0,s:d.strokes|0,o:d.over|0,score:d.score});
 
+function mergeLegacy(current,legacy){
+ const a=current||{holes:0,strokes:0,over:0,rounds:0,best:null};
+ if(a._nwMerged||!legacy?.holes)return {...a,_nwMerged:1};
+ const best=[a.best,legacy.best].filter(Number.isFinite);
+ return {...a,_nwMerged:1,name:cleanName(a.name||legacy.name),holes:(a.holes|0)+(legacy.holes|0),strokes:(a.strokes|0)+(legacy.strokes|0),over:(a.over|0)+(legacy.over|0),rounds:(a.rounds|0)+(legacy.rounds|0),best:best.length?Math.min(...best):null,at:Math.max(a.at||0,legacy.at||0)};
+}
 export class GolfRanks{
  constructor(backend,{send,now=()=>Date.now()}={}){this.backend=backend;this.send=send;this.now=now;this.top=null;this.topAt=0;this.loading=null;}
  db(){return this.backend()?.db||null;}
@@ -46,25 +52,29 @@ export class GolfRanks{
    this.board(peer.uid,pool).then(b=>this.send(peer.ws,{t:'golfrank',k:'board',...tag,...b})).catch(()=>this.send(peer.ws,{t:'golfrank',k:'board',...tag,off:true,top:[],me:null,login:!!peer.uid}));}
  }
  async save(uid,name,card,pool='miami',pars=GOLF_PARS){
-  const db=this.db();if(!db)throw Error('offline');const ref=db.doc(POOL[pool]+'/'+uid),now=this.now();
+  const db=this.db();if(!db)throw Error('offline');const ref=db.doc('golfRanks/'+uid),legacy=db.doc('nwGolfRanks/'+uid),now=this.now();
   const strokes=card.reduce((a,b)=>a+b,0),over=card.reduce((a,b,i)=>a+b-pars[i],0);
-  const row=await db.runTransaction(async tx=>{const d=(await tx.get(ref)).data()||{holes:0,strokes:0,over:0,rounds:0,best:null};
-   const r={name:cleanName(name),holes:(d.holes|0)+card.length,strokes:(d.strokes|0)+strokes,over:(d.over|0)+over,rounds:(d.rounds|0)+1,best:d.best==null?over:Math.min(d.best,over),at:now};r.score=golfScore(r);tx.set(ref,r);return r;});
-  this.tops?.delete(pool);if(pool==='miami')this.top=null;return {row:view(row),round:{holes:card.length,strokes,over},pool};
+  const row=await db.runTransaction(async tx=>{const [current,old]=await Promise.all([tx.get(ref),tx.get(legacy)]);const d=mergeLegacy(current.data(),old.data());
+   const r={_nwMerged:1,name:cleanName(name),holes:(d.holes|0)+card.length,strokes:(d.strokes|0)+strokes,over:(d.over|0)+over,rounds:(d.rounds|0)+1,best:d.best==null?over:Math.min(d.best,over),at:now};r.score=golfScore(r);tx.set(ref,r);return r;});
+  this.top=null;this.cacheEpoch=(this.cacheEpoch||0)+1;return {row:view(row),round:{holes:card.length,strokes,over},pool};
  }
  async list(pool='miami'){
-  if(pool!=='miami')return this.listPool(pool);
+  await this.mergeNorthwest();
   const now=this.now();if(this.top&&now-this.topAt<CACHE_MS)return this.top;if(this.loading)return this.loading;
   const db=this.db();if(!db)throw Error('offline');
-  this.loading=db.collection('golfRanks').orderBy('score','desc').limit(TOP+10).get().then(q=>{const rows=q.docs.map(d=>({uid:d.id,...d.data()})).filter(r=>r.holes>0).sort(golfOrder).slice(0,TOP);this.top=rows;this.topAt=this.now();return rows;}).finally(()=>{this.loading=null;});
+  const epoch=this.cacheEpoch||0;this.loading=db.collection('golfRanks').orderBy('score','desc').limit(TOP+10).get().then(q=>{const rows=q.docs.map(d=>({uid:d.id,...d.data()})).filter(r=>r.holes>0).sort(golfOrder).slice(0,TOP);if(epoch===(this.cacheEpoch||0)){this.top=rows;this.topAt=this.now();}return rows;}).finally(()=>{this.loading=null;});
   return this.loading;
  }
- async listPool(pool){                                   // 미국 대륙 3코스 통합 목록 (따로 캐시)
-  this.tops??=new Map();this.pending??=new Map();const now=this.now(),hit=this.tops.get(pool);if(hit&&now-hit.at<CACHE_MS)return hit.rows;if(this.pending.has(pool))return this.pending.get(pool);
+ async mergeNorthwest(){
+  if(this.legacyMerged)return;if(this.mergeJob)return this.mergeJob;
   const db=this.db();if(!db)throw Error('offline');
-  const job=db.collection(POOL[pool]).orderBy('score','desc').limit(TOP+10).get().then(q=>{const rows=q.docs.map(d=>({uid:d.id,...d.data()})).filter(r=>r.holes>0).sort(golfOrder).slice(0,TOP);this.tops.set(pool,{rows,at:this.now()});return rows;}).finally(()=>{this.pending.delete(pool);});
-  this.pending.set(pool,job);return job;
+  this.mergeJob=(async()=>{const q=await db.collection('nwGolfRanks').get();let i=0;
+   await Promise.all(Array.from({length:Math.min(4,q.docs.length)},async()=>{while(i<q.docs.length){const doc=q.docs[i++],ref=db.doc('golfRanks/'+doc.id),legacy=db.doc('nwGolfRanks/'+doc.id);
+    await db.runTransaction(async tx=>{const [a,b]=await Promise.all([tx.get(ref),tx.get(legacy)]);if(a.data()?._nwMerged||!b.data()?.holes)return;const r=mergeLegacy(a.data(),b.data());r.score=golfScore(r);tx.set(ref,r);});
+   }}));this.legacyMerged=true;this.top=null;
+  })().finally(()=>{this.mergeJob=null;});return this.mergeJob;
  }
+ async listPool(){return this.list();}
  async board(uid,pool='miami'){
   const rows=await this.list(pool),top=rows.map(view),col=POOL[pool]||'golfRanks';let me=null;
   if(uid){const i=rows.findIndex(r=>r.uid===uid);
